@@ -1,0 +1,24 @@
+// Real-world output references. Every number has a citation. Output is per source, and count sources make up the card's total.
+(function (root) {
+  const REFERENCES = [
+    { name: 'Candle', lumens: 12.57, count: 1, description: 'One candle flame. About one candela in every direction; derived from the definition, not measured.', source: '1 cd × 4π sr. BIPM, SI base unit candela: bipm.org/en/si-base-units/candela' },
+    { name: 'Night Light', lumens: 30, count: 1, description: 'A 0.5 W LED night-light bulb.', source: 'Philips 0.5 W C7 E12 LED, 30 lm. assets.signify.com/is/content/Signify/929001224613_NA.en_US.PROF.FP' },
+    { name: 'Position Lamps', lumens: 50, count: 2, description: 'A car’s pair of 5 W W5W signal bulbs.', source: 'Philips W5W 12961B2, 50 lm each. documents.philips.com/assets/20230214/75cf047c2ab944bd8e2cafa90090305e.pdf' },
+    { name: 'Amber Candelabra', lumens: 225, count: 1, description: 'A 3.5 W amber 2000 K decorative candle bulb.', source: 'Philips 3.5 W amber B11 E12, 225 lm. assets.signify.com/is/content/Signify/929002988703_EU.en_AA.PROF.FP' },
+    { name: 'Candelabra', lumens: 450, count: 1, description: 'A 95 CRI filament candelabra bulb, the equivalent of a 40 W incandescent.', source: 'Waveform ModernVintage 95 CRI E12 filament, 450 lm. store.waveformlighting.com/products/modernvintage-95-cri-candelabra-led-filament-bulb-for-home-residential' },
+    { name: 'House Bulb', lumens: 800, count: 1, description: 'A full-spectrum A19 household bulb, the equivalent of a 60 W incandescent.', source: 'Waveform Centric Daylight A19 10 W, 800 lm. store.waveformlighting.com/products/centric-daylight-full-spectrum-flicker-free-a19-10w-led-bulb' },
+    { name: 'Studio Bulb', lumens: 1600, count: 1, description: 'A flicker-free A21 film bulb, the equivalent of a 100 W incandescent. The calibrated bulb reference.', source: 'Waveform FilmGrade A21 15 W, 1600 lm. store.waveformlighting.com/products/filmgrade-flicker-free-a21-15w-led-bulb' },
+    { name: 'Low Beams', lumens: 1350, count: 2, description: 'A 2017 Mazda6 with halogen headlights: two 55 W H11 low-beam bulbs. Rated ±10%.', source: 'H11 fitment: mazdausa.com/static/manuals/2017/mazda6/contents/10020108.html. OSRAM ORIGINAL LINE 64211, 1350 lm each: osram.com/ecat (ZMP_4009184)' },
+    { name: 'T8 Fixture', lumens: 1800, count: 2, description: 'A strip fixture with two 4 ft full-spectrum T8 LED tubes.', source: 'Waveform Centric Daylight 4 ft T8, 1800 lm each, two per Waveform LED-ready strip fixture. store.waveformlighting.com/products/centric-daylight-full-spectrum-flicker-free-t8-led-tube-light' },
+    { name: 'Ceiling Panel', lumens: 5000, count: 1, description: 'A 2 ft × 4 ft full-spectrum LED panel for a drop ceiling grid, 50 W.', source: 'Waveform Centric Daylight 2×4 LED panel, 5000 lm. store.waveformlighting.com/products/centric-daylight-led-panel-light' },
+    { name: 'Streetlight', lumens: 17910, count: 1, description: 'An arm-mounted LED roadway light at its top configuration. Smaller versions of the same fixture go down to about 3100 lm.', source: 'Cree LEDway Road, up to 17910 lm. d105v96d69x09d.cloudfront.net/wp-content/uploads/ADLT-Cree-Lighting-LEDway-Spec-Sheet.pdf' },
+    { name: 'SkyPanel S60-C', lumens: 30000, count: 1, description: 'A film soft LED panel used as a key or fill, 400 W. ARRI publishes illuminance, not lumens: 1535 lx at 3 m, 5600 K. The lumen figure is a rental house’s lower bound.', source: '"Over 30000 lumens": makedonltd.gr/en/?p=2745. ARRI datasheet: cdn01.4wall.com/cms/rentals/files/f699736fddeaa1.pdf' },
+    { name: 'Searchlight', lumens: 40000, count: 1, description: 'A 700 W xenon searchlight.', source: 'Spectrolab SX-7 Starsun, 40000 lm. spectrolab.com/searchlights/pdfs/SX-7_Starsun.pdf' },
+    { name: 'Court Pole', lumens: 65600, count: 2, description: 'One 40 ft pole lighting the Penn Park basketball courts, Madison WI: two LED sports heads.', source: 'Musco TLC-LED-600, 65600 lm each, 2 per pole (Musco file 224333B). cityofmadison.com/Business/PW/contracts/documents/9306%20Exhibit%20C%20-%20Lighting.pdf' },
+    { name: 'Field Pole', lumens: 136000, count: 4, description: 'One 60 ft pole lighting the Hunnewell multipurpose fields, Wellesley MA: four LED sports heads.', source: 'Musco TLC-LED-1200, 136000 lm each, 4 per pole (Musco file 198552C). wellesleyma.gov/DocumentCenter/View/25360' },
+    { name: 'Stadium Pole', lumens: 181000, count: 8, description: 'One 80 ft pole lighting Tatlock Park, Summit NJ: eight LED stadium heads. Heads like these are only ever installed in arrays.', source: 'Musco TLC-LED-1500, 181000 lm each, 8 per pole (Musco file 116226E). cityofsummit.org/DocumentCenter/View/15118' },
+  ];
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = REFERENCES;
+  else root.P.REFERENCES = REFERENCES;
+})(typeof window !== 'undefined' ? window : globalThis);

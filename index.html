@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Penumbra</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2" fill="currentColor"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="M3.5 10 8 5.5l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="M3.5 6 8 10.5 12.5 6" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 16 16"><path d="M5.5 5.5h7v7h-7zM3.500 10.500v-7h7" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+</svg>
+
+<header class="topbar">
+  <strong class="brand">Penumbra</strong>
+  <input id="doc-name" class="doc-name" aria-label="Profile name" spellcheck="false">
+  <div class="group">
+    <button id="btn-open">Open .ies</button>
+    <button id="btn-save" class="primary">Save .ies</button>
+  </div>
+  <div class="group">
+    <button id="btn-undo" title="Ctrl+Z">Undo</button>
+    <button id="btn-redo" title="Ctrl+Y">Redo</button>
+  </div>
+  <label class="field">Start from
+    <select id="preset">
+      <option value="">Choose…</option>
+      <option value="flashlight">Flashlight</option>
+      <option value="downlight">Downlight</option>
+      <option value="washer">Wall washer</option>
+      <option value="blank">Blank sliders</option>
+    </select>
+  </label>
+  <label class="field">Light
+    <select id="light-type"><option value="spot">Spot</option><option value="point">Point</option></select>
+  </label>
+  <label class="field cone-field">Inner cone
+    <input id="inner-cone-range" type="range" min="0" max="88.9" step="0.1" aria-label="Inner cone slider">
+    <input id="inner-cone" type="number" min="0" max="88.9" step="any" class="num" aria-label="Inner cone value">
+  </label>
+  <label class="field cone-field">Outer cone
+    <input id="outer-cone-range" type="range" min="1" max="88.9" step="0.1" aria-label="Outer cone slider">
+    <input id="outer-cone" type="number" min="1" max="88.9" step="any" class="num" aria-label="Outer cone value">
+  </label>
+  <label class="field">Symmetry
+    <select id="symmetry">
+      <option value="none">None</option>
+      <option value="bilateral">Bilateral</option>
+      <option value="quadrant">Quadrant</option>
+      <option value="axial">Axial</option>
+    </select>
+  </label>
+  <span class="spacer"></span>
+  <span id="status" class="status" role="status"></span>
+  <input id="file-input" type="file" accept=".ies,.IES" hidden>
+</header>
+
+<main class="workspace">
+  <aside class="sidebar">
+    <section class="panel layers-panel">
+      <div class="panel-head">
+        <h2>Layers</h2>
+        <select id="add-layer" aria-label="Add layer">
+          <option value="">Add layer…</option>
+          <option value="beam">Beam</option>
+          <option value="ring">Ring</option>
+          <option value="lobe">Lobe</option>
+          <option value="cutoff">Cutoff</option>
+          <option value="repeat">Repeat</option>
+          <option value="curve">Free curve</option>
+          <option value="noise">Imperfection</option>
+        </select>
+      </div>
+      <ol id="layer-list" class="layer-list"></ol>
+    </section>
+    <section class="panel inspector-panel">
+      <div class="panel-head">
+        <div class="seg" id="side-tab" role="group" aria-label="Sidebar section">
+          <button data-v="layer">Layer</button><button data-v="output">Output</button>
+        </div>
+        <h2 id="inspector-title">Layer</h2>
+      </div>
+      <div id="inspector" class="inspector"></div>
+    </section>
+  </aside>
+
+  <section class="panel map-panel">
+    <div class="panel-head">
+      <h2>Top-down map</h2>
+      <div class="seg" id="map-extent" role="group" aria-label="Map extent">
+        <button data-v="90">0–90°</button><button data-v="180">0–180°</button>
+      </div>
+      <div class="seg" id="map-display" role="group" aria-label="Map display">
+        <button data-v="linear">Linear</button><button data-v="stops">Stops</button><button data-v="false">False colour</button>
+      </div>
+      <button id="btn-cone" title="Show the spot's cone falloff on the map and slice. It is never saved into the file.">Apply cone</button>
+      <span class="spacer"></span>
+      <span class="readout" id="map-readout"></span>
+    </div>
+    <div class="canvas-wrap"><canvas id="map" aria-label="Top-down intensity map. Drag to set the slice bearing or move layer handles."></canvas></div>
+  </section>
+
+  <section class="panel preview-panel">
+    <div class="panel-head">
+      <h2>Preview</h2>
+      <div class="seg" id="preview-view" role="group" aria-label="Preview view">
+        <button data-v="first">First person</button><button data-v="wall">Wall</button><button data-v="floor">Floor</button><button data-v="side">Side</button>
+      </div>
+      <span class="spacer"></span>
+      <button id="btn-ref" title="Store the current profile as a reference">Set reference</button>
+      <button id="btn-compare" disabled>Show reference</button>
+    </div>
+    <div class="canvas-wrap"><canvas id="preview" aria-label="Light preview. Drag to look around in first person."></canvas></div>
+    <div class="preview-controls" id="preview-controls"></div>
+  </section>
+
+  <section class="panel curve-panel">
+    <div class="panel-head">
+      <h2>Slice</h2>
+      <label class="field">Bearing <input id="bearing" class="num" type="number" min="0" max="360" step="0.5"></label>
+      <div class="seg" id="curve-scale" role="group" aria-label="Curve scale">
+        <button data-v="linear">Linear</button><button data-v="stops">Stops</button>
+      </div>
+      <span class="legend"><i class="k warm"></i>This plane <i class="k cool"></i>Perpendicular <i class="k ref"></i>Reference</span>
+      <span class="spacer"></span>
+      <span class="readout" id="stats"></span>
+    </div>
+    <div class="canvas-wrap"><canvas id="curve" aria-label="Intensity against vertical angle. Drag to draw the curve."></canvas></div>
+  </section>
+</main>
+
+<script src="js/core.js"></script>
+<script src="js/references.js"></script>
+<script src="js/views.js"></script>
+<script src="js/preview.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
