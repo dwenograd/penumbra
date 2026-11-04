@@ -115,6 +115,43 @@ test('simplifying a stroke keeps its shape with far fewer points', () => {
   assert.strictEqual(out.at(-1).a, 60);
 });
 
+test('adjustment layers at their defaults change nothing', () => {
+  const base = { ...lobe(1, 0, 0), blend: 'normal', soft: 20 };
+  const before = P.composite(doc([base])).N;
+  const adjustments = [
+    { id: 2, type: 'tonecurve', enabled: true, mix: 1, points: [{ a: 0, v: 0 }, { a: 1, v: 1 }] },
+    { id: 3, type: 'levels', enabled: true, mix: 1, inBlack: 0, inWhite: 1, gamma: 1, outBlack: 0, outWhite: 1 },
+    { id: 4, type: 'contrast', enabled: true, mix: 1, amount: 0, pivot: 0.18 },
+  ];
+  for (const adjustment of adjustments) {
+    assert.ok(maxError(P.composite(doc([base, adjustment])).N, before) < 2e-3, adjustment.type);
+  }
+});
+
+test('adjustment layers reshape the stack below them', () => {
+  const base = { ...lobe(1, 0, 0), blend: 'normal', radius: 40, soft: 60 };
+  const level = (l) => P.sample(P.composite(doc([base, { id: 2, enabled: true, mix: 1, ...l }])).N, 25, 0);
+  const plain = P.sample(P.composite(doc([base])).N, 25, 0);
+  assert.ok(level({ type: 'levels', inBlack: 0, inWhite: 1, gamma: 2, outBlack: 0, outWhite: 1 }) > plain, 'gamma lifts mids');
+  assert.ok(level({ type: 'contrast', amount: 0.5, pivot: 0.9 }) < plain, 'contrast drops below its pivot');
+  assert.ok(level({ type: 'tonecurve', points: [{ a: 0, v: 0 }, { a: 0.5, v: 0.8 }, { a: 1, v: 1 }] }) > plain, 'curve lift');
+  assert.ok(Math.abs(level({ type: 'contrast', amount: 1, pivot: 0.9, mix: 0 }) - plain) < 1e-6, 'mix of 0 is off');
+  const hidden = P.composite(doc([base, { id: 2, type: 'contrast', enabled: false, amount: 1, pivot: 0.5 }])).N;
+  assert.ok(Math.abs(P.sample(hidden, 25, 0) - plain) < 1e-6, 'hidden adjustment is off');
+});
+
+test('view-matching curves carry a look between the map views', () => {
+  const linearView = (n) => Math.pow(n, 1 / 2.2);
+  const stopsView = (n) => Math.max(0, 1 + Math.log2(Math.max(n, 1e-6)) / P.STOPS);
+  const curve = (kind) => P.adjustment({ type: 'tonecurve', points: P.viewCurve(kind) });
+  const toLinear = curve('stops-in-linear'), toStops = curve('linear-in-stops');
+  assert.ok(P.viewCurve('stops-in-linear').length < 40, 'stays editable');
+  for (const n of [1, 0.75, 0.5, 0.25, 0.1, 0.03, 0.01, 0.003, 0.001]) {
+    assert.ok(Math.abs(linearView(toLinear(n)) - stopsView(n)) < 0.02, `stops look at ${n}`);
+    assert.ok(Math.abs(stopsView(toStops(n)) - linearView(n)) < 0.04, `linear look at ${n}`);
+  }
+});
+
 test('source count multiplies per-source lumens', () => {
   const d = doc([lobe(1, 0, 0)]);
   d.output = { ...d.output, mode: 'flux', flux: 181000, count: 8 };

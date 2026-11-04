@@ -32,6 +32,9 @@
     repeat: () => mk('repeat', 'Repeat', { blend: 'multiply', count: 8, sharp: 0.1, inner: 5, outer: 60, fade: 4, phase: 0, mix: 0.5 }),
     curve: () => mk('curve', 'Free curve', { points: [{ a: 0, v: 1, s: 0 }, { a: 15, v: 0.8, s: 0 }, { a: 30, v: 0, s: 0.4 }, { a: 180, v: 0, s: 0 }] }),
     noise: () => mk('noise', 'Imperfection', { blend: 'multiply', scale: 6, contrast: 0.2, seed: 3 }),
+    tonecurve: () => mk('tonecurve', 'Curves', { points: [{ a: 0, v: 0 }, { a: 1, v: 1 }] }),
+    levels: () => mk('levels', 'Levels', { inBlack: 0, inWhite: 1, gamma: 1, outBlack: 0, outWhite: 1 }),
+    contrast: () => mk('contrast', 'Contrast', { amount: 0, pivot: 0.18 }),
   };
 
   const docBase = (name, layers, extra = {}) => ({
@@ -59,14 +62,16 @@
     blank: () => docBase('Untitled', [sliders([1, 0.9, 0.7, 0.5, 0.3, 0.15, 0.05, 0.01, 0, 0])]),
   };
 
+  const FREE_VIEW = { camX: -2.6, camY: 1.6, camZ: 0.7, camYaw: 0.72, camPitch: 0.1, lightX: 0, lightY: 2.2, lightZ: 3, lightPitch: -90, lightYaw: 0, lightRoll: 0 };
+
   const app = {
     doc: PRESETS.flashlight(),
     comp: null,
     ref: null,
     showRef: false,
     view: {
-      active: null, sideTab: 'layer', bearing: 0, applyCone: true, mapExtent: 90, mapDisplay: 'stops', curveScale: 'linear', sliderPlane: 'c0', selectedPoint: 0,
-      preview: { mode: 'first', room: 'grey', material: 'matte', roughness: 0.3, haze: 0.03, ev: 4, fov: 80, yaw: 0, pitch: -0.06, eye: 1.7, offR: 0.18, offU: -0.2, throw: 2.2, roomW: 7, roomH: 3.2, roomD: 8, radius: 16, ambient: 0.4 },
+      active: null, sideTab: 'layer', bearing: 0, bearingSnap: 15, bearingLock: false, applyCone: true, mapExtent: 90, mapDisplay: 'stops', curveScale: 'linear', sliderPlane: 'c0', selectedPoint: 0,
+      preview: { mode: 'first', gizmo: 'move', room: 'grey', shadows: true, sourceRadius: 0, material: 'matte', roughness: 0.3, haze: 0.03, ev: 4, fov: 80, yaw: 0, pitch: -0.06, eye: 1.7, offR: 0.18, offU: -0.2, throw: 2.2, roomW: 7, roomH: 3.2, roomD: 8, radius: 16, ambient: 0.4, ...FREE_VIEW },
     },
     activeLayer() { return app.doc.layers.find((l) => l.id === app.view.active) || null; },
     coneAt(v) {
@@ -75,6 +80,13 @@
     },
     sliderArray(l) { return app.view.sliderPlane === 'c90' && l.c90 ? l.c90 : l.c0; },
     setBearing(h) { app.view.bearing = Math.round(((h % 360) + 360) % 360 * 10) / 10; $('bearing').value = app.view.bearing; app.requestDraw(); updateStats(); },
+    dragBearing(h, free) {
+      const step = free ? 0 : app.view.bearingSnap;
+      app.setBearing(step ? Math.round(h / step) * step : h);
+    },
+    syncPreviewControls() { previewSyncs.forEach((f) => f()); },
+    setGizmo(mode) { app.view.preview.gizmo = mode; renderPreviewControls(); app.requestDraw(); },
+    setGizmo(mode) { app.view.preview.gizmo = mode; renderPreviewControls(); app.requestDraw(); },
     setMapReadout(v, h) {
       const r = $('map-readout');
       if (v === null || v === undefined) { r.textContent = ''; return; }
@@ -121,6 +133,7 @@
       return table;
     },
   };
+  let previewSyncs = [];
   let raf = 0, dirty = true, syncs = [], tableMode = null, table = null, fileHandle = null;
 
   const fmt = (n) => (n >= 1000 ? Math.round(n).toLocaleString('en-US') : n >= 10 ? n.toFixed(1) : n.toFixed(2));
@@ -182,6 +195,22 @@
     const S = 34 * 2;
     canvas.width = canvas.height = S;
     const ctx = canvas.getContext('2d');
+    if (P.isAdjustment(l)) {
+      // Adjustments have no light of their own, so their thumbnail is their response curve.
+      canvas.classList.add('adjust');
+      const fn = P.adjustment(l);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, S, S);
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (let x = 0; x <= S; x += 2) {
+        const y = S - Math.min(Math.pow(fn(Math.pow(x / S, 2.2)), 1 / 2.2), 1) * S;
+        if (x) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+      return;
+    }
     const img = ctx.createImageData(S, S);
     const F = P.layerField(l);
     let max = 0;
@@ -209,7 +238,7 @@
   }
 
   const BLEND = { normal: 'Normal', add: 'Add', screen: 'Screen', max: 'Max', multiply: 'Multiply', subtract: 'Subtract' };
-  const TYPE_LABEL = { sliders: 'Sliders', imported: 'Imported', beam: 'Beam', ring: 'Ring', cutoff: 'Cutoff', repeat: 'Repeat', curve: 'Curve', noise: 'Imperfection' };
+  const TYPE_LABEL = { sliders: 'Sliders', imported: 'Imported', beam: 'Beam', ring: 'Ring', cutoff: 'Cutoff', repeat: 'Repeat', curve: 'Curve', noise: 'Imperfection', tonecurve: 'Curves', levels: 'Levels', contrast: 'Contrast' };
 
   function renderLayers() {
     const list = $('layer-list');
@@ -228,11 +257,11 @@
       down.disabled = i === 0;
       del.disabled = app.doc.layers.length === 1;
       const name = el('input', { class: 'layer-name', value: l.name, 'aria-label': 'Layer name', spellcheck: 'false', onchange: (e) => { l.name = e.target.value; pushUndo(); renderInspector(); } });
-      const meta = `${TYPE_LABEL[l.type]} · ${BLEND[l.blend || 'normal']}${l.gain ? ` ${l.gain > 0 ? '+' : ''}${(+l.gain).toFixed(1)} EV` : ''}${l.clip ? ' · clipped' : ''}`;
+      const meta = P.isAdjustment(l) ? `Adjustment · ${TYPE_LABEL[l.type]}` : `${TYPE_LABEL[l.type]} · ${BLEND[l.blend || 'normal']}${l.gain ? ` ${l.gain > 0 ? '+' : ''}${(+l.gain).toFixed(1)} EV` : ''}${l.clip ? ' · clipped' : ''}`;
       const cv = el('canvas', { 'aria-hidden': 'true' });
       const li = el('li', { class: 'layer' + (l.id === app.view.active ? ' active' : '') + (l.enabled ? '' : ' muted'), 'data-id': l.id, onclick: () => selectLayer(l.id) },
         eye, cv, el('div', { class: 'layer-text' }, name, el('div', { class: 'layer-meta' }, meta)),
-        el('div', { class: 'layer-actions' }, solo, up, down, dup, del));
+        el('div', { class: 'layer-actions' }, P.isAdjustment(l) ? el('span', { class: 'icon' }) : solo, up, down, dup, del));
       list.append(li);
       thumb(cv, l);
     });
@@ -401,7 +430,118 @@
     cutoff: [['Bearing', 'bearing', 0, 360, 0.5], ['Edge', 'edge', -90, 180, 0.1], ['Softness', 'soft', 0, 60, 0.1]],
     repeat: [['Count', 'count', 1, 48, 1], ['Sharpness', 'sharp', 0, 1, 0.01], ['Inner', 'inner', 0, 180, 0.5], ['Outer', 'outer', 0, 180, 0.5], ['Outer fade', 'fade', 0, 40, 0.5], ['Phase', 'phase', 0, 360, 0.5]],
     noise: [['Scale', 'scale', 0.5, 45, 0.1], ['Contrast', 'contrast', 0, 1, 0.01], ['Seed', 'seed', 1, 999, 1]],
+    levels: [['In black', 'inBlack', 0, 1, 0.005], ['In white', 'inWhite', 0, 1, 0.005], ['Gamma', 'gamma', 0.1, 5, 0.01], ['Out black', 'outBlack', 0, 1, 0.005], ['Out white', 'outWhite', 0, 1, 0.005]],
+    contrast: [['Amount', 'amount', -1, 1, 0.01], ['Pivot', 'pivot', 0.01, 1, 0.01]],
   };
+
+  // Input to output graph for a Curves layer. Click to add a point, drag to move, right-click to remove.
+  function renderToneCurve(box, l) {
+    const canvas = el('canvas', { class: 'tone-curve', 'aria-label': 'Input to output curve. Click to add a point and drag to move it.' });
+    box.append(canvas, el('p', { class: 'hint' }, 'Click to add a point, drag to move it and right-click to remove it. Both axes are in display gamma, relative to the peak of the layers below.'));
+    const PAD = 6;
+    const dpr = () => window.devicePixelRatio || 1;
+    let drag = -1;
+    const draw = () => {
+      const r = canvas.getBoundingClientRect();
+      if (!r.width) return;
+      const d = dpr();
+      canvas.width = Math.round(r.width * d);
+      canvas.height = Math.round(r.height * d);
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height, p = PAD * d;
+      const sx = (a) => p + a * (W - 2 * p), sy = (v) => H - p - v * (H - 2 * p);
+      ctx.fillStyle = '#09090a';
+      ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+      ctx.lineWidth = d;
+      ctx.beginPath();
+      for (let i = 0; i <= 4; i++) {
+        ctx.moveTo(sx(i / 4), sy(0)); ctx.lineTo(sx(i / 4), sy(1));
+        ctx.moveTo(sx(0), sy(i / 4)); ctx.lineTo(sx(1), sy(i / 4));
+      }
+      ctx.moveTo(sx(0), sy(0)); ctx.lineTo(sx(1), sy(1));
+      ctx.stroke();
+      const T = P.curveTable(l.points.map((q) => ({ a: q.a * 180, v: q.v, s: 0 })), false);
+      ctx.strokeStyle = '#f0b35a';
+      ctx.lineWidth = 1.5 * d;
+      ctx.beginPath();
+      for (let i = 0; i <= 200; i++) {
+        const a = i / 200, y = sy(Math.min(T[Math.round(a * 1800)], 1));
+        if (i) ctx.lineTo(sx(a), y); else ctx.moveTo(sx(a), y);
+      }
+      ctx.stroke();
+      l.points.forEach((q, i) => {
+        ctx.fillStyle = i === drag ? '#f0b35a' : '#fff';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = d;
+        ctx.beginPath(); ctx.arc(sx(q.a), sy(q.v), 4.5 * d, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      });
+    };
+    const at = (e) => {
+      const r = canvas.getBoundingClientRect();
+      const clamp01 = (n) => Math.round(Math.max(0, Math.min(1, n)) * 1000) / 1000;
+      return [clamp01((e.clientX - r.left - PAD) / (r.width - 2 * PAD)), clamp01(1 - (e.clientY - r.top - PAD) / (r.height - 2 * PAD))];
+    };
+    const nearest = (e) => {
+      const r = canvas.getBoundingClientRect();
+      return l.points.findIndex((q) => Math.hypot(PAD + q.a * (r.width - 2 * PAD) - (e.clientX - r.left), r.height - PAD - q.v * (r.height - 2 * PAD) - (e.clientY - r.top)) < 9);
+    };
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    canvas.addEventListener('pointerdown', (e) => {
+      const hit = nearest(e);
+      if (e.button === 2) {
+        if (hit >= 0 && l.points.length > 2) { l.points.splice(hit, 1); app.changed(); app.commit(); draw(); }
+        return;
+      }
+      if (e.button !== 0) return;
+      canvas.setPointerCapture(e.pointerId);
+      if (hit >= 0) {
+        drag = hit;
+      } else {
+        const [a, v] = at(e);
+        l.points.push({ a, v });
+        l.points.sort((p, q) => p.a - q.a);
+        drag = l.points.findIndex((q) => q.a === a && q.v === v);
+        app.changed();
+      }
+      draw();
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (drag < 0) return;
+      const [a, v] = at(e);
+      const before = l.points[drag - 1], after = l.points[drag + 1];
+      let next = a;
+      if (before) next = Math.max(next, before.a + 0.002);
+      if (after) next = Math.min(next, after.a - 0.002);
+      l.points[drag].a = next;
+      l.points[drag].v = v;
+      app.changed();
+      draw();
+    });
+    const release = () => { if (drag >= 0) { drag = -1; app.commit(); draw(); } };
+    canvas.addEventListener('pointerup', release);
+    canvas.addEventListener('pointercancel', release);
+    requestAnimationFrame(draw);
+    syncs.push(draw);
+    const preset = (label, kind, title) => el('button', { type: 'button', title, onclick: () => {
+      l.points = P.viewCurve(kind);
+      app.changed(); app.commit(); renderInspector();
+    } }, label);
+    box.append(el('h3', { class: 'subhead' }, 'Match a map view'),
+      el('div', { class: 'btn-row' },
+        preset('Stops look in Linear', 'stops-in-linear', 'Makes the Linear view look the way the Stops view looks now'),
+        preset('Linear look in Stops', 'linear-in-stops', 'Makes the Stops view look the way the Linear view looks now')),
+      el('p', { class: 'hint' }, 'Keep this layer on top of the stack. Turn off Apply cone for an exact match, because the cone is drawn over both views.'));
+  }
+
+  function resetAdjustment(l) {
+    const fresh = FACTORY[l.type]();
+    const { id, name, enabled, solo, mix, ...settings } = fresh;
+    Object.assign(l, settings);
+    app.changed();
+    app.commit();
+    renderInspector();
+  }
 
   function renderInspector() {
     syncs = [];
@@ -416,6 +556,16 @@
     const l = app.activeLayer();
     if (!l) return;
     $('inspector-title').textContent = l.name;
+
+    if (P.isAdjustment(l)) {
+      if (l.type === 'tonecurve') renderToneCurve(box, l);
+      for (const [label, key, a, b, c] of FIELDS[l.type] || []) row(box, label, l, key, a, b, c);
+      if (l.type === 'levels') box.append(el('p', { class: 'hint' }, 'In and out values are in display gamma, relative to the peak of the layers below.'));
+      if (l.type === 'contrast') box.append(el('p', { class: 'hint' }, 'Spreads light in stops around the pivot, which is a share of the peak of the layers below.'));
+      row(box, 'Mix', l, 'mix', 0, 1, 0.01);
+      box.append(el('div', { class: 'btn-row' }, el('button', { type: 'button', onclick: () => resetAdjustment(l) }, 'Reset')));
+      return;
+    }
 
     if (l.type === 'sliders') renderSliders(box, l);
     if (l.type === 'curve') renderCurve(box, l);
@@ -581,12 +731,14 @@
   function renderPreviewControls() {
     const box = $('preview-controls');
     box.replaceChildren();
+    previewSyncs = [];
     const v = app.view.preview;
     const ctl = (label, key, min, max, step) => {
       const range = el('input', { type: 'range', min, max, step, value: v[key], 'aria-label': label });
       const num = el('input', { type: 'number', class: 'num', min, max, step: 'any', value: v[key], 'aria-label': label + ' value' });
       range.addEventListener('input', () => { v[key] = +range.value; num.value = v[key]; app.requestDraw(); });
       num.addEventListener('input', () => { if (num.value !== '' && Number.isFinite(+num.value)) { v[key] = +num.value; range.value = v[key]; app.requestDraw(); } });
+      previewSyncs.push(() => { range.value = v[key]; if (document.activeElement !== num) num.value = v[key]; });
       box.append(el('label', { class: 'field' }, label, range, num));
     };
     const choice = (label, key, options) => {
@@ -600,23 +752,37 @@
       choice('Room', 'room', [['grey', 'Grey 18%'], ['checker', 'Checker']]);
       choice('Material', 'material', [['matte', 'Matte'], ['ball', 'Metal ball'], ['all', 'All metal']]);
       if (v.material !== 'matte') ctl('Roughness', 'roughness', 0.04, 1, 0.01);
+      // Wall and Floor put the camera at the light, where a shadow is always hidden behind the ball.
+      if (v.mode === 'first' || v.mode === 'free') box.append(el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: v.shadows, onchange: (e) => { v.shadows = e.target.checked; app.requestDraw(); } }), 'Shadows'));
     }
+    if (v.mode === 'first' || v.mode === 'free') ctl('Source radius (m)', 'sourceRadius', 0, 0.5, 0.005);
     ctl('EV100', 'ev', -4, 16, 0.1);
     if (v.mode === 'first') {
       ctl('FOV', 'fov', 30, 120, 1);
       ctl('Light right', 'offR', -0.6, 0.6, 0.01);
       ctl('Light up', 'offU', -0.6, 0.6, 0.01);
+    } else if (v.mode === 'free') {
+      choice('Gizmo', 'gizmo', [['move', 'Move (W)'], ['rotate', 'Rotate (E)']]);
+      ctl('FOV', 'fov', 30, 120, 1);
+      ctl('Light X', 'lightX', -v.roomW / 2 + 0.1, v.roomW / 2 - 0.1, 0.01);
+      ctl('Light Y', 'lightY', 0.1, v.roomH - 0.1, 0.01);
+      ctl('Light Z', 'lightZ', 0.1, v.roomD - 0.1, 0.01);
+      ctl('Pitch', 'lightPitch', -90, 90, 0.5);
+      ctl('Yaw', 'lightYaw', -180, 180, 0.5);
+      ctl('Roll', 'lightRoll', -180, 180, 0.5);
+      box.append(el('button', { type: 'button', onclick: () => { Object.assign(v, FREE_VIEW); renderPreviewControls(); app.requestDraw(); } }, 'Reset view'));
     } else {
       ctl(v.mode === 'floor' ? 'Height m' : 'Distance m', 'throw', 0.2, 9, 0.05);
       if (v.mode !== 'side') ctl('FOV', 'fov', 30, 120, 1);
     }
     if (v.mode !== 'side') ctl('Ambient', 'ambient', 0, 5, 0.05);
     else ctl('Haze', 'haze', 0, 1, 0.005);
+    if (v.mode === 'free') box.append(el('div', { class: 'note' }, 'Hold right-click to look and fly with W A S D, Q and E, and Shift goes faster. Scroll moves forward. Otherwise, W and E switch the gizmo. Hold Ctrl while dragging it to snap.'));
     box.append(el('div', { class: 'note' }, v.mode === 'side'
       ? (app.doc.lightType === 'point'
         ? 'Side view of a point light: no cone, so the whole 0–180° profile shows. Forward (V=0) is down and V=180 is up. C0 is left at bearing 0. Brightness is illustrative and scales with Haze.'
         : 'Side view of a spot light at the current bearing, with cone and inverse-square falloff. Anything past the cone is cut off. Brightness is illustrative and scales with Haze.')
-      : 'Profile sampled through a 256×256 bilinear lookup, with spot cone and inverse-square. Metal uses GGX with a point source. Tonemap is an ACES approximation. No shadows, GI or reflections.'));
+      : 'Profile sampled through a 256×256 bilinear lookup, with spot cone and inverse-square. Metal uses GGX with a point source. Only the ball casts shadows, and Source radius softens them with an approximation. Tonemap is an ACES approximation. No GI or reflections.'));
   }
 
   function syncCone() {
@@ -729,7 +895,7 @@
   const curve = P.Curve($('curve'), app);
   let preview = null;
   try {
-    preview = P.Preview($('preview'), app);
+    preview = P.Preview($('preview'), app, $('preview-overlay'));
     if (!preview) status('WebGL2 is not available, so the preview is off. Map and curve still work.', true);
   } catch (e) {
     status(`Preview shader failed to start. ${e.message}`, true);
@@ -774,6 +940,19 @@
   $('btn-cone').onclick = () => { app.view.applyCone = !app.view.applyCone; renderAll(); };
   $('symmetry').onchange = (e) => { app.doc.symmetry = e.target.value; app.changed(); app.commit(); };
   $('bearing').oninput = (e) => { if (e.target.value !== '') app.setBearing(+e.target.value); };
+  $('bearing-snap').value = app.view.bearingSnap;
+  $('bearing-snap').onchange = (e) => { app.view.bearingSnap = +e.target.value; };
+  $('bearing-reset').onclick = () => app.setBearing(0);
+  $('bearing-lock').onclick = () => {
+    const locked = !app.view.bearingLock;
+    app.view.bearingLock = locked;
+    $('bearing-lock').textContent = locked ? 'Locked' : 'Lock';
+    $('bearing-lock').classList.toggle('toggle-on', locked);
+    $('bearing-lock').setAttribute('aria-pressed', locked ? 'true' : 'false');
+    $('bearing').disabled = locked;
+    $('bearing-reset').disabled = locked;
+    app.requestDraw();
+  };
   $('add-layer').onchange = (e) => {
     if (!e.target.value) return;
     const l = FACTORY[e.target.value]();

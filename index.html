@@ -73,6 +73,11 @@
           <option value="repeat">Repeat</option>
           <option value="curve">Free curve</option>
           <option value="noise">Imperfection</option>
+          <optgroup label="Adjustment">
+            <option value="tonecurve">Curves</option>
+            <option value="levels">Levels</option>
+            <option value="contrast">Contrast</option>
+          </optgroup>
         </select>
       </div>
       <ol id="layer-list" class="layer-list"></ol>
@@ -98,23 +103,21 @@
         <button data-v="linear">Linear</button><button data-v="stops">Stops</button><button data-v="false">False colour</button>
       </div>
       <button id="btn-cone" title="Show the spot's cone falloff on the map and slice. It is never saved into the file.">Apply cone</button>
-      <span class="spacer"></span>
-      <span class="readout" id="map-readout"></span>
     </div>
-    <div class="canvas-wrap"><canvas id="map" aria-label="Top-down intensity map. Drag to set the slice bearing or move layer handles."></canvas></div>
+    <div class="canvas-wrap"><canvas id="map" aria-label="Top-down intensity map. Drag the Slice handles to rotate the line plotted on the chart below, or drag layer handles."></canvas><span class="readout map-readout" id="map-readout"></span></div>
   </section>
 
   <section class="panel preview-panel">
     <div class="panel-head">
       <h2>Preview</h2>
       <div class="seg" id="preview-view" role="group" aria-label="Preview view">
-        <button data-v="first">First person</button><button data-v="wall">Wall</button><button data-v="floor">Floor</button><button data-v="side">Side</button>
+        <button data-v="first">First person</button><button data-v="free">Free</button><button data-v="wall">Wall</button><button data-v="floor">Floor</button><button data-v="side">Side</button>
       </div>
       <span class="spacer"></span>
       <button id="btn-ref" title="Store the current profile as a reference">Set reference</button>
       <button id="btn-compare" disabled>Show reference</button>
     </div>
-    <div class="canvas-wrap"><canvas id="preview" aria-label="Light preview. Drag to look around in first person."></canvas></div>
+    <div class="canvas-wrap"><canvas id="preview" aria-label="Light preview. Drag to look around in first person and free view. In free view, drag the gizmo to move or rotate the light, and hold right-click to fly."></canvas><canvas id="preview-overlay" aria-hidden="true"></canvas></div>
     <div class="preview-controls" id="preview-controls"></div>
   </section>
 
@@ -122,6 +125,11 @@
     <div class="panel-head">
       <h2>Slice</h2>
       <label class="field">Bearing <input id="bearing" class="num" type="number" min="0" max="360" step="0.5"></label>
+      <label class="field" title="Snapping for dragging the slice handles on the map. Hold Shift while dragging to move freely.">Snap
+        <select id="bearing-snap"><option value="0">Off</option><option value="1">1°</option><option value="5">5°</option><option value="15">15°</option><option value="45">45°</option></select>
+      </label>
+      <button id="bearing-reset" title="Return the slice to bearing 0">Reset</button>
+      <button id="bearing-lock" title="Stop the slice from being moved">Lock</button>
       <div class="seg" id="curve-scale" role="group" aria-label="Curve scale">
         <button data-v="linear">Linear</button><button data-v="stops">Stops</button>
       </div>

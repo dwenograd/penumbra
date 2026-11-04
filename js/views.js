@@ -3,7 +3,7 @@
   const WARM = '#f0b35a', COOL = '#7db8ff', GRID = 'rgba(255,255,255,0.14)', LABEL = '#b4b4af';
   const FONT = '11px "Segoe UI", system-ui, sans-serif';
   // Stops scale range below peak. Everything dimmer than this draws as black.
-  const STOPS = 12;
+  const STOPS = P.STOPS;
   const FALSE_BANDS = [[20, 20, 90], [30, 70, 190], [20, 150, 170], [40, 180, 80], [190, 200, 50], [240, 140, 40], [230, 50, 50], [255, 255, 255]];
 
   function fit(canvas) {
@@ -66,7 +66,7 @@
       const l = app.activeLayer();
       if (!l) return [];
       const out = [];
-      const aimable = !['sliders', 'imported', 'noise'].includes(l.type);
+      const aimable = !['sliders', 'imported', 'noise'].includes(l.type) && !P.isAdjustment(l);
       if (aimable && l.type !== 'cutoff') out.push({ id: 'aim', at: P.layerToGrid(l, 0, 0) });
       if (l.type === 'beam' || l.type === 'ring') out.push({ id: 'radius', at: P.layerToGrid(l, l.radius, 180) });
       if (l.type === 'repeat') out.push({ id: 'outer', at: P.layerToGrid(l, l.outer, l.phase) });
@@ -161,8 +161,23 @@
       ctx.setLineDash([]);
       ctx.strokeStyle = WARM;
       ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-      ctx.fillStyle = WARM;
-      ctx.beginPath(); ctx.arc(x0, y0, 5 * dpr, 0, Math.PI * 2); ctx.fill();
+      for (const [hx, hy] of [[x0, y0], [x1, y1]]) {
+        ctx.beginPath(); ctx.arc(hx, hy, 5 * dpr, 0, Math.PI * 2);
+        if (app.view.bearingLock) { ctx.fillStyle = '#09090a'; ctx.fill(); ctx.stroke(); } else { ctx.fillStyle = WARM; ctx.fill(); }
+      }
+      // Names the two lines, since the chart below them plots what they cross.
+      const tag = (text, x, y, color) => {
+        const inward = 44 * dpr, d = Math.hypot(cx - x, cy - y) || 1;
+        const tx = x + ((cx - x) / d) * inward, ty = y + ((cy - y) / d) * inward;
+        const w = ctx.measureText(text).width + 8 * dpr, h = 15 * dpr;
+        ctx.fillStyle = 'rgba(9,9,10,0.82)';
+        ctx.fillRect(tx - w / 2, ty - h / 2, w, h);
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(text, tx, ty);
+      };
+      tag('Slice', x0, y0, WARM);
+      tag('Perpendicular', x2, y2, COOL);
 
       const l = app.activeLayer();
       if (l) outline(l);
@@ -182,12 +197,18 @@
       canvas.setPointerCapture(e.pointerId);
       const [x, y] = pos(e), dpr = window.devicePixelRatio || 1;
       const near = (a, b) => Math.hypot(a - x, b - y) < 9 * dpr;
-      drag = 'bearing';
+      // The slice only moves from its own handles, so a stray click on the map can't rotate it.
+      drag = null;
+      if (!app.view.bearingLock) {
+        const [ax, ay] = toScreen(ext, app.view.bearing), [bx, by] = toScreen(ext, app.view.bearing + 180);
+        if (near(ax, ay)) drag = 'bearing';
+        else if (near(bx, by)) drag = 'bearing-opposite';
+      }
       for (const hd of handles()) {
         const [hx, hy] = toScreen(hd.at[0], hd.at[1]);
         if (near(hx, hy)) drag = hd.id;
       }
-      move(e);
+      if (drag) move(e);
     });
 
     function move(e) {
@@ -197,7 +218,8 @@
       if (!drag) return;
       const l = app.activeLayer();
       const vc = Math.min(v, ext);
-      if (drag === 'bearing') { app.setBearing(h); return; }
+      if (drag === 'bearing') { app.dragBearing(h, e.shiftKey); return; }
+      if (drag === 'bearing-opposite') { app.dragBearing(h + 180, e.shiftKey); return; }
       const round = (n) => Math.round(n * 10) / 10;
       if (drag === 'aim') { l.aimV = round(vc); l.aimH = round(h); }
       if (drag === 'radius') l.radius = round(P.gridToLayer(l, vc, h)[0]);
@@ -210,7 +232,7 @@
 
     canvas.addEventListener('pointermove', move);
     canvas.addEventListener('pointerup', () => {
-      if (drag && drag !== 'bearing') app.commit();
+      if (drag && !drag.startsWith('bearing')) app.commit();
       drag = null;
     });
     canvas.addEventListener('pointerleave', () => app.setMapReadout(null));

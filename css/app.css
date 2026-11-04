@@ -205,3 +205,13 @@ button.toggle-on { background: #48484b; font-weight: 600; }
   .canvas-wrap { min-height: 360px; flex: none; height: 56vh; }
   .inspector { max-height: 520px; }
 }
+
+.layer canvas.adjust { border-radius: 3px; }
+.tone-curve { display: block; width: 100%; aspect-ratio: 4 / 3; margin-top: 2px; border: 1px solid var(--line); cursor: crosshair; touch-action: none; }
+
+/* Floats over the map so showing it can't change the layout under the cursor. */
+.map-readout { position: absolute; top: 6px; left: 8px; pointer-events: none; }
+
+#preview-overlay { pointer-events: none; }
+
+.preview-controls { max-height: 34%; overflow-y: auto; }

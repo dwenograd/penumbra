@@ -19,13 +19,14 @@ An IES profile can be asymmetric and hold noise like lens grime, so a beam can c
 - **Top-down map:** see the whole light at once, in linear, stops or false colour, with draggable layer handles.
 - **Slice curve:** drag to draw a curve, or type each point's angle, value and sharpness.
 - **Composited layers:** Beam, Ring, Lobe, Cutoff, Repeat, Free curve and Imperfection, with blend modes, EV gain, mix, clipping, solo and placement.
+- **Adjustment layers:** Curves, Levels and Contrast reshape everything below them.
 - **Slider base layer:** C0-180 and C90-270 sliders at 10° steps with %, candela and lux, for anyone coming from slider-based tools.
-- **Preview:** First person, Wall, Floor and Side views, with spot cone, inverse-square falloff, a grey or checker room, and GGX metal.
+- **Preview:** First person, Free, Wall, Floor and Side views, with spot cone, inverse-square falloff, a grey or checker room, GGX metal and optional shadows. Free view flies around the room, and you can place and aim the light.
 - **Brightness references:** 16 cited real-world lights, from a candle to a stadium pole.
 - **Import and export:** open any type C `.ies`. Saved files carry their editable layers, and radially symmetric profiles save as a single plane.
 
 ## Limits
-- The preview's tonemap is an ACES approximation, with no shadows, GI or reflections. Use the engine for final judgement.
+- The preview's tonemap is an ACES approximation, with no GI or reflections. Only the test ball casts shadows, and Source radius softens them with an approximation. Use the engine for final judgement.
 - Side view brightness is illustrative and scales with Haze.
 - Profiles are previewed and saved on a 256 x 256 grid, so very sharp edges soften.
 - Layer groups aren't in yet.

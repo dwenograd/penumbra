@@ -342,12 +342,70 @@
     }
   }
 
+  const DISPLAY_GAMMA = 2.2;
+  P.isAdjustment = (l) => l.type === 'tonecurve' || l.type === 'levels' || l.type === 'contrast';
+
+  // Maps light relative to the stack's current peak, 0 to 1. Curves and Levels work in display
+  // gamma, like a paint program, so the dim end is usable. Contrast works in stops around its pivot.
+  P.adjustment = function (l) {
+    if (l.type === 'tonecurve') {
+      const T = curveTable([...l.points].sort((a, b) => a.a - b.a).map((p) => ({ a: p.a * 180, v: p.v, s: 0 })), false);
+      return (n) => {
+        const at = Math.pow(Math.max(n, 0), 1 / DISPLAY_GAMMA) * 1800;
+        const i = Math.min(Math.floor(at), 1799);
+        return Math.pow(T[i] + (T[i + 1] - T[i]) * (at - i), DISPLAY_GAMMA);
+      };
+    }
+    if (l.type === 'levels') {
+      const range = Math.max(l.inWhite - l.inBlack, 1e-4);
+      const power = 1 / Math.max(l.gamma, 0.01);
+      return (n) => {
+        const t = clamp((Math.pow(Math.max(n, 0), 1 / DISPLAY_GAMMA) - l.inBlack) / range, 0, 1);
+        return Math.pow(l.outBlack + (l.outWhite - l.outBlack) * Math.pow(t, power), DISPLAY_GAMMA);
+      };
+    }
+    const power = Math.pow(2, l.amount * 2);
+    const pivot = Math.max(l.pivot, 1e-4);
+    return (n) => (n > 0 ? pivot * Math.pow(n / pivot, power) : 0);
+  };
+
+  // How far below peak the map's Stops view reaches before drawing black.
+  P.STOPS = 12;
+
+  // Curves-layer points that carry a look between the map's views. 'stops-in-linear' makes the
+  // Linear view look the way Stops looked; 'linear-in-stops' does the reverse.
+  P.viewCurve = function (kind) {
+    const g = DISPLAY_GAMMA, stops = P.STOPS;
+    const toOutput = kind === 'stops-in-linear'
+      ? (x) => Math.max(0, 1 + (g * Math.log2(Math.max(x, 1e-6))) / stops)
+      : (x) => Math.pow(2, (stops * (x - 1)) / g);
+    const samples = [];
+    for (let i = 0; i <= 400; i++) {
+      // Packs samples toward the dim end, where the stops scale changes fastest.
+      const x = Math.pow(i / 400, 2);
+      samples.push({ a: x, v: Math.min(1, toOutput(x)) });
+    }
+    return P.simplifyCurve(samples, 0.004).map((p) => ({ a: +p.a.toFixed(4), v: +p.v.toFixed(4) }));
+  };
+
+  function applyAdjustment(G, l) {
+    let peak = 0;
+    for (let i = 0; i < G.length; i++) if (G[i] > peak) peak = G[i];
+    if (peak <= 0) return;
+    const fn = P.adjustment(l);
+    const mix = l.mix === undefined ? 1 : l.mix;
+    for (let i = 0; i < G.length; i++) {
+      G[i] = Math.max(0, G[i] + (fn(G[i] / peak) * peak - G[i]) * mix);
+    }
+  }
+
   P.composite = function (doc) {
     const G = new Float32Array(SIZE * SIZE);
     const anySolo = doc.layers.some((l) => l.solo);
     let prev = null;
     for (const l of doc.layers) {
       if (anySolo ? !l.solo : !l.enabled) continue;
+      if (P.isAdjustment(l)) { applyAdjustment(G, l); continue; }
       const F = P.layerField(l);
       const clipTo = l.clip ? prev : null;
       const gain = Math.pow(2, l.gain || 0);
