@@ -86,7 +86,6 @@
     },
     syncPreviewControls() { previewSyncs.forEach((f) => f()); },
     setGizmo(mode) { app.view.preview.gizmo = mode; renderPreviewControls(); app.requestDraw(); },
-    setGizmo(mode) { app.view.preview.gizmo = mode; renderPreviewControls(); app.requestDraw(); },
     setMapReadout(v, h) {
       const r = $('map-readout');
       if (v === null || v === undefined) { r.textContent = ''; return; }
@@ -256,15 +255,80 @@
       up.disabled = i === app.doc.layers.length - 1;
       down.disabled = i === 0;
       del.disabled = app.doc.layers.length === 1;
-      const name = el('input', { class: 'layer-name', value: l.name, 'aria-label': 'Layer name', spellcheck: 'false', onchange: (e) => { l.name = e.target.value; pushUndo(); renderInspector(); } });
+      const name = el('input', { class: 'layer-name', value: l.name, readonly: true, 'aria-label': 'Layer name. Double-click or press Enter to rename.', spellcheck: 'false',
+        onchange: (e) => { l.name = e.target.value; pushUndo(); renderInspector(); },
+        onblur: (e) => { e.target.readOnly = true; },
+        onkeydown: (e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          if (e.target.readOnly) { e.target.readOnly = false; e.target.select(); } else { e.target.blur(); }
+        } });
       const meta = P.isAdjustment(l) ? `Adjustment · ${TYPE_LABEL[l.type]}` : `${TYPE_LABEL[l.type]} · ${BLEND[l.blend || 'normal']}${l.gain ? ` ${l.gain > 0 ? '+' : ''}${(+l.gain).toFixed(1)} EV` : ''}${l.clip ? ' · clipped' : ''}`;
       const cv = el('canvas', { 'aria-hidden': 'true' });
-      const li = el('li', { class: 'layer' + (l.id === app.view.active ? ' active' : '') + (l.enabled ? '' : ' muted'), 'data-id': l.id, onclick: () => selectLayer(l.id) },
+      const li = el('li', { class: 'layer' + (l.id === app.view.active ? ' active' : '') + (l.enabled ? '' : ' muted'), 'data-id': l.id, onclick: () => selectLayer(l.id), ondblclick: (e) => {
+        if (e.target.closest('button')) return;
+        name.readOnly = false;
+        name.focus();
+        name.select();
+      } },
         eye, cv, el('div', { class: 'layer-text' }, name, el('div', { class: 'layer-meta' }, meta)),
         el('div', { class: 'layer-actions' }, P.isAdjustment(l) ? el('span', { class: 'icon' }) : solo, up, down, dup, del));
       list.append(li);
       thumb(cv, l);
     });
+  }
+
+  // Drag a row to reorder. The list shows the top of the stack first, so its rows run opposite to the array.
+  function wireLayerDragging() {
+    const list = $('layer-list');
+    const marker = el('div', { class: 'layer-drop-marker' });
+    let drag = null;
+
+    const finish = (commit) => {
+      if (!drag) return;
+      const { row, moving, slot, id } = drag;
+      drag = null;
+      row.classList.remove('dragging');
+      marker.remove();
+      list.classList.remove('reordering');
+      if (!moving || !commit || slot === null) return;
+      const layers = app.doc.layers;
+      const rest = layers.filter((l) => l.id !== id).reverse();
+      rest.splice(slot, 0, layers.find((l) => l.id === id));
+      const order = rest.reverse();
+      if (order.every((l, i) => l === layers[i])) return;
+      app.doc.layers = order;
+      app.changed();
+      app.commit();
+    };
+
+    list.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const row = e.target.closest('.layer');
+      if (!row || e.target.closest('button') || (e.target.matches('input') && !e.target.readOnly)) return;
+      drag = { row, id: +row.dataset.id, x: e.clientX, y: e.clientY, pointer: e.pointerId, moving: false, slot: null };
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.pointer) return;
+      if (!drag.moving) {
+        if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 5) return;
+        drag.moving = true;
+        drag.row.classList.add('dragging');
+        list.classList.add('reordering');
+        list.append(marker);
+      }
+      const bounds = list.getBoundingClientRect();
+      if (e.clientY < bounds.top + 16) list.scrollTop -= 8;
+      if (e.clientY > bounds.bottom - 16) list.scrollTop += 8;
+      const rows = [...list.querySelectorAll('.layer')].filter((r) => r !== drag.row).sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+      drag.slot = rows.filter((r) => { const b = r.getBoundingClientRect(); return b.top + b.height / 2 < e.clientY; }).length;
+      const next = rows[drag.slot], last = rows[rows.length - 1];
+      const edge = next ? next.getBoundingClientRect().top - 1 : last ? last.getBoundingClientRect().bottom + 1 : bounds.top;
+      marker.style.top = `${edge - bounds.top + list.scrollTop}px`;
+    });
+    window.addEventListener('pointerup', () => finish(true));
+    window.addEventListener('pointercancel', () => finish(false));
+    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') finish(false); });
   }
 
   function selectLayer(id) {
@@ -985,6 +1049,7 @@
   });
   window.addEventListener('dragover', (e) => e.preventDefault());
   window.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) openFile(e.dataTransfer.files[0]); });
+  wireLayerDragging();
   new ResizeObserver(() => app.requestDraw()).observe(document.querySelector('.workspace'));
 
   $('bearing').value = app.view.bearing;

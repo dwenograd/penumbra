@@ -215,3 +215,11 @@ button.toggle-on { background: #48484b; font-weight: 600; }
 #preview-overlay { pointer-events: none; }
 
 .preview-controls { max-height: 34%; overflow-y: auto; }
+
+.layer-list { position: relative; }
+.layer { cursor: grab; user-select: none; -webkit-user-select: none; }
+.layer-name[readonly] { pointer-events: none; cursor: inherit; user-select: none; -webkit-user-select: none; }
+.layer-name:not([readonly]) { background: #101011; cursor: text; }
+.layer.dragging { opacity: 0.45; }
+.reordering, .reordering .layer { cursor: grabbing; }
+.layer-drop-marker { position: absolute; left: 6px; right: 6px; height: 2px; margin-top: -1px; background: var(--warm); pointer-events: none; }
