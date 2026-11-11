@@ -27,7 +27,9 @@
 
   P.Map = function (canvas, app) {
     const ctx = canvas.getContext('2d');
-    let img = null, lut = null, lutU = null, lutV = null, W = 0, H = 0, cx = 0, cy = 0, R = 0, ext = 0, drag = null;
+    let img = null, lut = null, lutU = null, lutV = null, W = 0, H = 0, cx = 0, cy = 0, R = 0, ext = 0, drag = null, centred = false, shadedN = null, shadedKey = '';
+    // Screen radius, in CSS pixels, inside which a dragged handle catches on the middle of the map.
+    const CENTRE_SNAP = 10;
 
     const toScreen = (v, h) => {
       const a = (h * Math.PI) / 180, r = (v / ext) * R;
@@ -44,6 +46,7 @@
       W = canvas.width; H = canvas.height; ext = app.view.mapExtent;
       cx = W / 2; cy = H / 2; R = Math.min(W, H) / 2 - 24 * (window.devicePixelRatio || 1);
       img = ctx.createImageData(W, H);
+      shadedN = null;
       lut = new Int32Array(W * H).fill(-1);
       lutU = new Float32Array(W * H);
       lutV = new Float32Array(W * H);
@@ -60,6 +63,53 @@
           lutV[i] = t - y0;
         }
       }
+    }
+
+    // A picture laid over the map to trace against. It is only ever drawn here: it never feeds
+    // the profile, so no image data ends up in the saved candela values.
+    let traceCanvas = null, traceKey = '';
+    function traceLayer() {
+      const t = app.view.trace;
+      if (!t || !t.pixels || !t.show) return null;
+      const key = [W, H, ext, t.version, t.span, t.rot, t.offX, t.offY, t.projection, t.flip].join();
+      if (key === traceKey) return traceCanvas;
+      traceKey = key;
+      if (!traceCanvas) traceCanvas = document.createElement('canvas');
+      traceCanvas.width = W; traceCanvas.height = H;
+      const tctx = traceCanvas.getContext('2d');
+      const out = tctx.createImageData(W, H), o = out.data;
+      const src = t.pixels.data, iw = t.pixels.width, ih = t.pixels.height;
+      const half = Math.max(t.span, 1) / 2, RADIANS = Math.PI / 180;
+      const flat = t.projection === 'flat';
+      const reach = flat ? Math.tan(Math.min(half, 89) * RADIANS) : half;
+      const cr = Math.cos(-t.rot * RADIANS), sr = Math.sin(-t.rot * RADIANS);
+      for (let y = 0, i = 0; y < H; y++) {
+        for (let x = 0; x < W; x++, i++) {
+          if (lut[i] < 0) continue;
+          // Degrees right and down of the image's centre, as drawn on the map.
+          const px = ((x + 0.5 - cx) / R) * ext - t.offX, py = ((y + 0.5 - cy) / R) * ext - t.offY;
+          const deg = Math.hypot(px, py);
+          if (flat && deg >= 89) continue;
+          // A photo of a flat wall spreads angles by their tangent. The map spaces them evenly.
+          const k = deg < 1e-6 ? 0 : (flat ? Math.tan(deg * RADIANS) : deg) / reach / deg;
+          let ux = (px * cr - py * sr) * k;
+          const uy = (px * sr + py * cr) * k;
+          if (t.flip) ux = -ux;
+          const fx = (iw / 2) * (1 + ux) - 0.5, fy = ih / 2 + (iw / 2) * uy - 0.5;
+          if (fx < 0 || fy < 0 || fx > iw - 1 || fy > ih - 1) continue;
+          const x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(x0 + 1, iw - 1), y1 = Math.min(y0 + 1, ih - 1);
+          const tx = fx - x0, ty = fy - y0, p = i * 4;
+          const a = (x0 + y0 * iw) * 4, b = (x1 + y0 * iw) * 4, c = (x0 + y1 * iw) * 4, d = (x1 + y1 * iw) * 4;
+          for (let ch = 0; ch < 3; ch++) {
+            const top = src[a + ch] + (src[b + ch] - src[a + ch]) * tx;
+            const low = src[c + ch] + (src[d + ch] - src[c + ch]) * tx;
+            o[p + ch] = top + (low - top) * ty;
+          }
+          o[p + 3] = 255;
+        }
+      }
+      tctx.putImageData(out, 0, 0);
+      return traceCanvas;
     }
 
     function handles() {
@@ -103,24 +153,39 @@
     function draw() {
       const resized = fit(canvas);
       if (resized || !img || ext !== app.view.mapExtent) rebuild();
-      const N = app.comp.N, d = img.data, mode = app.view.mapDisplay;
-      const table = app.mapTable(mode, shade);
-      const cone = new Float32Array(256);
-      for (let x = 0; x < 256; x++) cone[x] = app.coneAt((x * 180) / 256);
-      for (let i = 0, p = 0; i < lut.length; i++, p += 4) {
-        const k = lut[i];
-        if (k < 0) { d[p] = d[p + 1] = d[p + 2] = 0; d[p + 3] = 0; continue; }
-        const x0 = k & 255, y0 = k >> 8;
-        const x1 = x0 < 255 ? x0 + 1 : x0, y1 = y0 < 255 ? y0 + 1 : y0;
-        const u = lutU[i], w = lutV[i];
-        const top = N[k] + (N[x1 + y0 * 256] - N[k]) * u;
-        const low = N[x0 + y1 * 256] + (N[x1 + y1 * 256] - N[x0 + y1 * 256]) * u;
-        const shaped = (top + (low - top) * w) * (cone[x0] + (cone[x1] - cone[x0]) * u);
-        const t = table[Math.min(65535, (shaped * 65535) | 0)];
-        d[p] = t & 255; d[p + 1] = (t >> 8) & 255; d[p + 2] = (t >> 16) & 255; d[p + 3] = 255;
+      const N = app.comp.N, mode = app.view.mapDisplay;
+      // Shading every pixel is the slow part, so it only reruns when the light, the cone or the
+      // display mode changes. Camera moves and other preview-only redraws reuse the last image.
+      const spotCone = app.view.applyCone && app.doc.lightType === 'spot';
+      const key = mode + (spotCone ? `|${app.doc.cone.inner}|${app.doc.cone.outer}` : '|off');
+      if (N !== shadedN || key !== shadedKey) {
+        shadedN = N; shadedKey = key;
+        const table = app.mapTable(mode, shade);
+        const cone = new Float32Array(256);
+        for (let x = 0; x < 256; x++) cone[x] = app.coneAt((x * 180) / 256);
+        // One 32-bit write per pixel. The table's red, green, blue order matches the canvas's bytes.
+        const d = new Uint32Array(img.data.buffer);
+        for (let i = 0; i < lut.length; i++) {
+          const k = lut[i];
+          if (k < 0) { d[i] = 0; continue; }
+          const x0 = k & 255, y0 = k >> 8;
+          const x1 = x0 < 255 ? x0 + 1 : x0, y1 = y0 < 255 ? y0 + 1 : y0;
+          const u = lutU[i], w = lutV[i];
+          const top = N[k] + (N[x1 + y0 * 256] - N[k]) * u;
+          const low = N[x0 + y1 * 256] + (N[x1 + y1 * 256] - N[x0 + y1 * 256]) * u;
+          const shaped = (top + (low - top) * w) * (cone[x0] + (cone[x1] - cone[x0]) * u);
+          d[i] = table[Math.min(65535, (shaped * 65535) | 0)] | 0xff000000;
+        }
       }
       ctx.putImageData(img, 0, 0);
       const dpr = window.devicePixelRatio || 1;
+      const trace = traceLayer();
+      if (trace) {
+        ctx.save();
+        ctx.globalAlpha = app.view.trace.opacity;
+        ctx.drawImage(trace, 0, 0);
+        ctx.restore();
+      }
       ctx.font = FONT.replace('11px', 11 * dpr + 'px');
       ctx.lineWidth = dpr;
       ctx.strokeStyle = GRID;
@@ -131,17 +196,31 @@
         const [x, y] = toScreen(ext, h);
         ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x, y); ctx.stroke();
       }
-      if (app.doc.lightType === 'spot' && app.doc.cone.outer < ext) {
-        ctx.save();
-        ctx.fillStyle = 'rgba(8,8,9,0.72)';
-        ctx.beginPath();
-        ctx.arc(cx, cy, R, 0, Math.PI * 2);
-        ctx.arc(cx, cy, (app.doc.cone.outer / ext) * R, 0, Math.PI * 2, true);
-        ctx.fill();
-        ctx.setLineDash([4 * dpr, 4 * dpr]);
-        ctx.strokeStyle = LABEL;
-        ctx.beginPath(); ctx.arc(cx, cy, (app.doc.cone.outer / ext) * R, 0, Math.PI * 2); ctx.stroke();
-        ctx.restore();
+      // What the spot actually projects: everything past the outer cone is dimmed out, and the
+      // inner ring marks where the cone's own falloff starts.
+      const coneLabels = [];
+      if (app.doc.lightType === 'spot') {
+        const cone = app.doc.cone;
+        const ring = (deg, dash, name, turn) => {
+          const r = (deg / ext) * R;
+          ctx.save();
+          ctx.setLineDash(dash.map((n) => n * dpr));
+          ctx.strokeStyle = LABEL;
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+          ctx.restore();
+          coneLabels.push([`${name} ${+deg.toFixed(1)}°`, cx + r * Math.cos(turn), cy + r * Math.sin(turn)]);
+        };
+        if (cone.outer < ext) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(8,8,9,0.72)';
+          ctx.beginPath();
+          ctx.arc(cx, cy, R, 0, Math.PI * 2);
+          ctx.arc(cx, cy, (cone.outer / ext) * R, 0, Math.PI * 2, true);
+          ctx.fill();
+          ctx.restore();
+          ring(cone.outer, [4, 4], 'Outer cone', -Math.PI / 3);
+        }
+        if (cone.inner > 0 && cone.inner < ext) ring(cone.inner, [1, 3], 'Inner cone', Math.PI / 3);
       }
       ctx.fillStyle = LABEL;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -156,9 +235,11 @@
       const b = app.view.bearing;
       const [x0, y0] = toScreen(ext, b), [x1, y1] = toScreen(ext, b + 180);
       const [x2, y2] = toScreen(ext, b + 90), [x3, y3] = toScreen(ext, b + 270);
-      ctx.strokeStyle = COOL; ctx.setLineDash([3 * dpr, 4 * dpr]);
-      ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x3, y3); ctx.stroke();
-      ctx.setLineDash([]);
+      if (app.view.showPerp) {
+        ctx.strokeStyle = COOL; ctx.setLineDash([3 * dpr, 4 * dpr]);
+        ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x3, y3); ctx.stroke();
+        ctx.setLineDash([]);
+      }
       ctx.strokeStyle = WARM;
       ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
       for (const [hx, hy] of [[x0, y0], [x1, y1]]) {
@@ -177,10 +258,24 @@
         ctx.fillText(text, tx, ty);
       };
       tag('Slice', x0, y0, WARM);
-      tag('Perpendicular', x2, y2, COOL);
+      if (app.view.showPerp) tag('Across', x2, y2, COOL);
+      for (const [text, lx, ly] of coneLabels) {
+        const w = ctx.measureText(text).width + 8 * dpr, h = 15 * dpr;
+        ctx.fillStyle = 'rgba(9,9,10,0.82)';
+        ctx.fillRect(lx - w / 2, ly - h / 2, w, h);
+        ctx.fillStyle = LABEL;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(text, lx, ly);
+      }
 
       const l = app.activeLayer();
       if (l) outline(l);
+      if (drag === 'aim' || drag === 'edge') {
+        // Shows where the middle is while something is being moved, and lights up once it has caught.
+        ctx.strokeStyle = centred ? WARM : LABEL;
+        ctx.lineWidth = (centred ? 2 : 1) * dpr;
+        ctx.beginPath(); ctx.arc(cx, cy, CENTRE_SNAP * dpr, 0, Math.PI * 2); ctx.stroke();
+      }
       for (const hd of handles()) {
         const [x, y] = toScreen(hd.at[0], hd.at[1]);
         ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000';
@@ -221,11 +316,13 @@
       if (drag === 'bearing') { app.dragBearing(h, e.shiftKey); return; }
       if (drag === 'bearing-opposite') { app.dragBearing(h + 180, e.shiftKey); return; }
       const round = (n) => Math.round(n * 10) / 10;
-      if (drag === 'aim') { l.aimV = round(vc); l.aimH = round(h); }
+      // Close to the middle means the middle. Shift places it freely, as it does for the slice.
+      centred = (drag === 'aim' || drag === 'edge') && !e.shiftKey && Math.hypot(x - cx, y - cy) < CENTRE_SNAP * (window.devicePixelRatio || 1);
+      if (drag === 'aim') { l.aimV = centred ? 0 : round(vc); l.aimH = centred ? 0 : round(h); }
       if (drag === 'radius') l.radius = round(P.gridToLayer(l, vc, h)[0]);
       if (drag === 'outer') l.outer = round(P.gridToLayer(l, vc, h)[0]);
       if (drag === 'edge') {
-        l.bearing = round(h); l.edge = round(vc);
+        if (centred) l.edge = 0; else { l.bearing = round(h); l.edge = round(vc); }
       }
       app.changed(true);
     }
@@ -234,9 +331,10 @@
     canvas.addEventListener('pointerup', () => {
       if (drag && !drag.startsWith('bearing')) app.commit();
       drag = null;
+      if (centred) { centred = false; app.requestDraw(); }
     });
     canvas.addEventListener('pointerleave', () => app.setMapReadout(null));
-    return { draw, invalidate() { img = null; } };
+    return { draw, invalidate() { img = null; traceKey = ''; } };
   };
 
   P.Curve = function (canvas, app) {
@@ -306,22 +404,39 @@
         ctx.beginPath(); ctx.moveTo(p.l, y); ctx.lineTo(W - p.r, y); ctx.stroke();
         ctx.fillText(s, p.l - 6 * dpr, y);
       }
-      if (app.doc.lightType === 'spot' && app.doc.cone.outer < ext) {
-        const x = xOf(app.doc.cone.outer);
-        ctx.fillStyle = 'rgba(8,8,9,0.6)';
-        ctx.fillRect(x, p.t, W - p.r - x, H - p.t - p.b);
+      if (app.doc.lightType === 'spot') {
+        const cone = app.doc.cone;
+        const mark = (deg, dash, name, side) => {
+          const x = xOf(deg);
+          ctx.save();
+          ctx.setLineDash(dash.map((n) => n * dpr));
+          ctx.strokeStyle = LABEL;
+          ctx.beginPath(); ctx.moveTo(x, p.t); ctx.lineTo(x, H - p.b); ctx.stroke();
+          ctx.restore();
+          ctx.fillStyle = LABEL;
+          ctx.textAlign = side; ctx.textBaseline = 'top';
+          ctx.fillText(name, x + (side === 'left' ? 4 : -4) * dpr, p.t + 2 * dpr);
+        };
+        if (cone.outer < ext) {
+          const x = xOf(cone.outer);
+          ctx.fillStyle = 'rgba(8,8,9,0.6)';
+          ctx.fillRect(x, p.t, W - p.r - x, H - p.t - p.b);
+          mark(cone.outer, [4, 4], 'Outer cone', 'left');
+        }
+        if (cone.inner > 0 && cone.inner < ext) mark(cone.inner, [1, 3], 'Inner cone', 'right');
       }
       const b = app.view.bearing;
       if (app.ref) plot(app.ref.N, b, '#b8b8b4', [2, 3], 1.25);
-      plot(app.comp.N, b + 90, COOL, [5, 3], 1.25);
-      plot(app.comp.N, b + 270, COOL, [1, 3], 1.25);
+      if (app.view.showPerp) {
+        plot(app.comp.N, b + 90, COOL, [5, 3], 1.25);
+        plot(app.comp.N, b + 270, COOL, [1, 3], 1.25);
+      }
       plot(app.comp.N, b + 180, WARM, [1, 3], 1.25);
       plot(app.comp.N, b, WARM, null, 1.75);
 
       const l = app.activeLayer();
       if (l && (l.type === 'curve' || l.type === 'sliders')) {
         const pts = points();
-        const planeH = l.type === 'sliders' && app.view.sliderPlane === 'c90' ? 90 : 0;
         ctx.strokeStyle = '#fff'; ctx.lineWidth = dpr;
         ctx.beginPath();
         if (l.type === 'curve') {
@@ -334,7 +449,6 @@
           pts.forEach((q, i) => { if (i) ctx.lineTo(xOf(q.v), yOf(q.n)); else ctx.moveTo(xOf(q.v), yOf(q.n)); });
         }
         ctx.stroke();
-        void planeH;
         for (const q of pts) {
           if (q.v > ext) continue;
           const sel = l.type === 'curve' && app.view.selectedPoint === q.i;

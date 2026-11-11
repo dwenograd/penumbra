@@ -70,8 +70,9 @@
     ref: null,
     showRef: false,
     view: {
-      active: null, sideTab: 'layer', bearing: 0, bearingSnap: 15, bearingLock: false, applyCone: true, mapExtent: 90, mapDisplay: 'stops', curveScale: 'linear', sliderPlane: 'c0', selectedPoint: 0,
-      preview: { mode: 'first', gizmo: 'move', room: 'grey', shadows: true, sourceRadius: 0, material: 'matte', roughness: 0.3, haze: 0.03, ev: 4, fov: 80, yaw: 0, pitch: -0.06, eye: 1.7, offR: 0.18, offU: -0.2, throw: 2.2, roomW: 7, roomH: 3.2, roomD: 8, radius: 16, ambient: 0.4, ...FREE_VIEW },
+      active: null, sideTab: 'layer', bearing: 0, bearingSnap: 15, bearingLock: false, showPerp: false, applyCone: true, mapExtent: 90, mapDisplay: 'stops', curveScale: 'linear', sliderPlane: 'c0', selectedPoint: 0,
+      preview: { mode: 'first', gizmo: 'move', room: 'grey', shadows: true, sourceRadius: 0, material: 'matte', roughness: 0.3, haze: 0.03, ev: 4, fov: 80, yaw: 0, pitch: -0.06, eye: 1.7, offR: 0.18, offU: -0.2, throw: 2.2, roomW: 7, roomH: 3.2, roomD: 8, radius: 16, ambient: 0.4, kelvin: 6500, count: 1, spacing: 1.5, ...FREE_VIEW },
+      trace: null,
     },
     activeLayer() { return app.doc.layers.find((l) => l.id === app.view.active) || null; },
     coneAt(v) {
@@ -90,7 +91,8 @@
       const r = $('map-readout');
       if (v === null || v === undefined) { r.textContent = ''; return; }
       const n = P.sample(app.comp.N, v, h) * app.coneAt(v);
-      r.innerHTML = `V <b>${v.toFixed(1)}°</b> H <b>${h.toFixed(1)}°</b> <b>${(n * 100).toFixed(1)}%</b> <b>${fmt(n * app.comp.peak)} cd</b>`;
+      const cd = n * app.comp.peak, d = app.doc.output.height / 100;
+      r.innerHTML = `V <b>${v.toFixed(1)}°</b> H <b>${h.toFixed(1)}°</b> <b>${(n * 100).toFixed(1)}%</b> <b>${fmt(cd)} cd</b> <b>${fmt(cd / (d * d))} lux</b> at ${+d.toFixed(2)} m`;
     },
     changed(fromCanvas) { dirty = true; app.requestDraw(); if (fromCanvas) syncs.forEach((f) => f()); },
     commit() { pushUndo(); renderLayers(); },
@@ -133,7 +135,11 @@
     },
   };
   let previewSyncs = [];
-  let raf = 0, dirty = true, syncs = [], tableMode = null, table = null, fileHandle = null;
+  let raf = 0, dirty = true, syncs = [], tableMode = null, table = null;
+  // Each loaded profile gets a session number, and a save location belongs to one session. So
+  // undoing back past an Open can't write the old profile over the file that was just opened.
+  let sessions = 0;
+  const fileHandles = new Map();
 
   const fmt = (n) => (n >= 1000 ? Math.round(n).toLocaleString('en-US') : n >= 10 ? n.toFixed(1) : n.toFixed(2));
   const planeLabel = (symmetry) => ({ axial: '1 plane (radially symmetric)', quadrant: '65 planes (quadrant symmetric)', bilateral: '129 planes (bilateral)', none: '257 planes (asymmetric)' }[symmetry]);
@@ -147,8 +153,46 @@
   }
 
   const undo = [], redo = [];
-  const snapshot = () => JSON.stringify(app.doc);
+  // An imported file's candela table never changes, so snapshots hold a key to it, not a copy.
+  const blobs = new Map(), blobKeys = new WeakMap();
+  let nextBlob = 1;
+  const snapshot = () => JSON.stringify(app.doc, (k, v) => {
+    if (k !== 'data' || !v || !v.cd) return v;
+    if (!blobKeys.has(v)) { blobKeys.set(v, 'b' + nextBlob++); blobs.set(blobKeys.get(v), v); }
+    return { key: blobKeys.get(v) };
+  });
   let lastSnap = null;
+
+  // Session storage. Everything here is optional: private windows and full disks just skip it.
+  const STORE_DOC = 'penumbra.doc', STORE_VIEW = 'penumbra.view';
+  const VIEW_KEYS = ['applyCone', 'mapExtent', 'mapDisplay', 'curveScale', 'bearingSnap', 'showPerp'];
+  let saveTimer = 0;
+  function saveSession() {
+    clearTimeout(saveTimer);
+    saveTimer = 0;
+    try {
+      const view = { preview: app.view.preview };
+      for (const k of VIEW_KEYS) view[k] = app.view[k];
+      localStorage.setItem(STORE_VIEW, JSON.stringify(view));
+      localStorage.setItem(STORE_DOC, JSON.stringify({ ...app.doc, session: undefined }));
+    } catch (e) { /* Storage is unavailable or full. */ }
+  }
+  const queueSave = () => { if (!saveTimer) saveTimer = setTimeout(saveSession, 600); };
+  function restoreView() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORE_VIEW) || 'null');
+      if (!saved) return;
+      const take = (into, from, keys) => { for (const k of keys) if (typeof from[k] === typeof into[k]) into[k] = from[k]; };
+      take(app.view, saved, VIEW_KEYS);
+      if (saved.preview) take(app.view.preview, saved.preview, Object.keys(app.view.preview));
+    } catch (e) { /* Ignore a damaged entry. */ }
+  }
+  function savedDoc() {
+    try {
+      const d = JSON.parse(localStorage.getItem(STORE_DOC) || 'null');
+      return P.validDoc(d) ? d : null;
+    } catch (e) { return null; }
+  }
   function pushUndo() {
     const s = snapshot();
     if (s === lastSnap) return;
@@ -157,14 +201,16 @@
     redo.length = 0;
     lastSnap = s;
     updateUndo();
+    queueSave();
   }
   function restore(s) {
-    app.doc = JSON.parse(s);
+    app.doc = JSON.parse(s, (k, v) => (k === 'data' && v && v.key && !v.cd ? blobs.get(v.key) : v));
     lastSnap = s;
     if (!app.activeLayer()) app.view.active = app.doc.layers[0].id;
     dirty = true;
     renderAll();
     updateUndo();
+    queueSave();
   }
   function updateUndo() {
     $('btn-undo').disabled = !undo.length;
@@ -350,6 +396,7 @@
   function duplicateLayer(l) {
     const c = JSON.parse(JSON.stringify(l));
     c.id = nextId++;
+    if (l.data) c.data = l.data;
     c.name = l.name + ' copy';
     app.doc.layers.splice(app.doc.layers.indexOf(l) + 1, 0, c);
     app.view.active = c.id;
@@ -821,6 +868,11 @@
     }
     if (v.mode === 'first' || v.mode === 'free') ctl('Source radius (m)', 'sourceRadius', 0, 0.5, 0.005);
     ctl('EV100', 'ev', -4, 16, 0.1);
+    ctl('Colour temp (K)', 'kelvin', 1500, 12000, 50);
+    if (v.mode === 'wall' || v.mode === 'floor' || v.mode === 'free') {
+      ctl('Lights in row', 'count', 1, 12, 1);
+      ctl('Spacing (m)', 'spacing', 0.1, 5, 0.05);
+    }
     if (v.mode === 'first') {
       ctl('FOV', 'fov', 30, 120, 1);
       ctl('Light right', 'offR', -0.6, 0.6, 0.01);
@@ -846,7 +898,7 @@
       ? (app.doc.lightType === 'point'
         ? 'Side view of a point light: no cone, so the whole 0–180° profile shows. Forward (V=0) is down and V=180 is up. C0 is left at bearing 0. Brightness is illustrative and scales with Haze.'
         : 'Side view of a spot light at the current bearing, with cone and inverse-square falloff. Anything past the cone is cut off. Brightness is illustrative and scales with Haze.')
-      : 'Profile sampled through a 256×256 bilinear lookup, with spot cone and inverse-square. Metal uses GGX with a point source. Only the ball casts shadows, and Source radius softens them with an approximation. Tonemap is an ACES approximation. No GI or reflections.'));
+      : 'Profile sampled through a 256×256 bilinear lookup, with spot cone and inverse-square. Metal uses GGX with a point source. Only the ball casts shadows, and Source radius softens them with an approximation. Tonemap is an ACES approximation. No GI or reflections. Colour temp tints the preview only and keeps brightness equal; 6500 K is neutral. A row repeats the light along its own right axis.'));
   }
 
   function syncCone() {
@@ -889,7 +941,10 @@
     app.requestDraw();
   }
 
-  function loadDoc(doc) {
+  // Loading is an undo step unless fresh is set, so a stray drop or preset pick can be taken back.
+  function loadDoc(doc, fresh) {
+    if (!P.validDoc(doc)) throw new Error('Its saved layers are damaged.');
+    doc.session = ++sessions;
     const maxId = Math.max(0, ...doc.layers.map((l) => l.id));
     nextId = Math.max(nextId, maxId + 1);
     app.doc = doc;
@@ -900,26 +955,44 @@
     app.view.active = doc.layers[doc.layers.length - 1].id;
     if (doc.layers[0].type === 'sliders' && doc.layers.length === 1) app.view.active = doc.layers[0].id;
     app.view.selectedPoint = 0;
-    fileHandle = null;
     dirty = true;
-    undo.length = redo.length = 0;
-    lastSnap = snapshot();
-    updateUndo();
+    if (fresh) { undo.length = redo.length = 0; lastSnap = snapshot(); updateUndo(); } else pushUndo();
     renderAll();
   }
 
-  async function openFile(file) {
+  const importedLayer = (parsed, file, props) => mk('imported', file.name.replace(/\.ies$/i, ''), { blend: 'normal', data: { v: parsed.v, h: parsed.h, cd: parsed.cd }, source: file.name, ...props });
+
+  // mode 'doc' replaces the profile, 'layer' adds the file on top, and 'ref' loads it for comparison.
+  async function openFile(file, handle, mode = 'doc') {
     try {
       const parsed = P.parseIES(await file.text());
       const stem = file.name.replace(/\.ies$/i, '');
+      const notes = parsed.type !== 1 ? ` Photometric type ${parsed.type}: only type C is fully supported.` : '';
+      if (mode === 'ref') {
+        app.ref = P.bakeIES(parsed);
+        $('btn-compare').disabled = false;
+        status(`${file.name} is the reference. It shows on the slice, and in the preview when compared.${notes}`);
+        app.requestDraw();
+        return;
+      }
+      if (mode === 'layer') {
+        const l = importedLayer(parsed, file, { blend: 'add' });
+        app.doc.layers.push(l);
+        app.view.active = l.id;
+        if (Math.max(...parsed.v) > 90 && app.view.mapExtent !== 180) { app.view.mapExtent = 180; map.invalidate(); updateSegs(); }
+        app.changed(); app.commit(); renderInspector();
+        status(`Added ${file.name} as a layer, at its own peak. Use Gain to balance it against the rest.${notes}`);
+        return;
+      }
       if (parsed.doc) {
         loadDoc(parsed.doc);
+        // Only a file this editor wrote is safe to save back over.
+        if (handle) fileHandles.set(app.doc.session, handle);
         status(`Opened ${file.name} with its editable layers.`);
         return;
       }
-      const notes = parsed.type !== 1 ? ` Photometric type ${parsed.type}: only type C is fully supported.` : '';
-      const base = mk('imported', stem, { blend: 'normal', data: { v: parsed.v, h: parsed.h, cd: parsed.cd }, source: file.name });
-      const d = docBase(stem, [base], { output: { peak: Math.round(parsed.peak), flux: Math.max(1, Math.round(parsed.lumens > 0 ? parsed.lumens : 800)), watts: parsed.watts } });      d.maker = parsed.keywords.MANUFAC || '';
+      const d = docBase(stem, [importedLayer(parsed, file)], { output: { peak: Math.round(parsed.peak), flux: Math.max(1, Math.round(parsed.lumens > 0 ? parsed.lumens : 800)), watts: parsed.watts } });
+      d.maker = parsed.keywords.MANUFAC || '';
       loadDoc(d);
       const reach = Math.max(...parsed.v);
       if (reach > 90) { app.view.mapExtent = 180; map.invalidate(); updateSegs(); }
@@ -929,12 +1002,150 @@
     }
   }
 
+  const IES_TYPES = [{ description: 'IES profile', accept: { 'text/plain': ['.ies'] } }];
+  let fileMode = 'doc';
+  function pickFile(mode) {
+    fileMode = mode;
+    $('file-input').click();
+  }
+  // The picker keeps a handle, so saving can go straight back to the opened file.
+  async function pickOpen() {
+    if (!window.showOpenFilePicker) { pickFile('doc'); return; }
+    try {
+      const [handle] = await window.showOpenFilePicker({ types: IES_TYPES });
+      openFile(await handle.getFile(), handle);
+    } catch (e) {
+      if (e.name !== 'AbortError') pickFile('doc');
+    }
+  }
+
+  function download(blob, name) {
+    const a = el('a', { href: URL.createObjectURL(blob), download: name });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    // Firefox reads the blob after click returns, so it can't be revoked straight away.
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  }
+  const fileStem = () => (app.doc.name || 'profile').replace(/[\\/:*?"<>|]+/g, '_');
+
+  function savePNG(canvas, suffix) {
+    const flat = el('canvas');
+    flat.width = canvas.width; flat.height = canvas.height;
+    const ctx = flat.getContext('2d');
+    ctx.fillStyle = '#09090a';
+    ctx.fillRect(0, 0, flat.width, flat.height);
+    ctx.drawImage(canvas, 0, 0);
+    flat.toBlob((blob) => {
+      if (!blob) { status('Could not make the image.', true); return; }
+      download(blob, `${fileStem()}-${suffix}.png`);
+      status(`Saved ${fileStem()}-${suffix}.png to your downloads folder.`);
+    }, 'image/png');
+  }
+
+  // A link that carries the layers, compressed, in the part of the address that never leaves the browser.
+  const SHARE_HOME = 'https://dwenograd.github.io/penumbra/';
+  const SHARE_LIMIT = 30000;
+  async function squeeze(input, Stream) {
+    const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : input;
+    return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new Stream('deflate-raw'))).arrayBuffer());
+  }
+  async function shareLink() {
+    if (!window.CompressionStream) { status('This browser cannot make share links.', true); return; }
+    const bytes = await squeeze(JSON.stringify({ ...app.doc, session: undefined }), CompressionStream);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    const code = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    if (code.length > SHARE_LIMIT) {
+      status(app.doc.layers.some((l) => l.type === 'imported')
+        ? 'Too large for a link, because an imported file is part of this profile. Send the .ies instead.'
+        : 'Too large for a link. Send the .ies instead.', true);
+      return;
+    }
+    const base = location.protocol.startsWith('http') ? location.origin + location.pathname : SHARE_HOME;
+    const link = `${base}#p=${code}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      status('Link copied. It opens this profile with its layers.');
+    } catch (e) {
+      location.hash = `p=${code}`;
+      status('Could not reach the clipboard, so the link is in the address bar.');
+    }
+  }
+  async function openSharedLink() {
+    const m = /^#p=([A-Za-z0-9_-]+)$/.exec(location.hash);
+    if (!m || !window.DecompressionStream) return;
+    try {
+      const binary = atob(m[1].replace(/-/g, '+').replace(/_/g, '/'));
+      const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+      loadDoc(JSON.parse(new TextDecoder().decode(await squeeze(bytes, DecompressionStream))));
+      status('Opened a shared profile. Undo returns to what you had before.');
+    } catch (e) {
+      status('That link could not be read.', true);
+    }
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+
+  // Tracing image for the map. Kept out of the profile and out of saved files.
+  let traceVersion = 0;
+  async function loadTrace(file) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, 1024 / Math.max(bitmap.width, bitmap.height));
+      const c = el('canvas');
+      c.width = Math.max(1, Math.round(bitmap.width * scale));
+      c.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(bitmap, 0, 0, c.width, c.height);
+      const keep = app.view.trace || { show: true, opacity: 0.5, span: 60, rot: 0, offX: 0, offY: 0, projection: 'flat', flip: false };
+      app.view.trace = { ...keep, show: true, name: file.name, pixels: ctx.getImageData(0, 0, c.width, c.height), version: ++traceVersion };
+      renderTraceControls();
+      app.requestDraw();
+      status(`Tracing ${file.name} on the map. It is a guide only and is never saved into the profile.`);
+    } catch (e) {
+      status(`Could not read ${file.name} as an image.`, true);
+    }
+  }
+
+  function renderTraceControls() {
+    const box = $('trace-controls');
+    box.replaceChildren();
+    const t = app.view.trace;
+    box.hidden = !t;
+    if (!t) { app.requestDraw(); return; }
+    const ctl = (label, key, min, max, step) => {
+      const range = el('input', { type: 'range', min, max, step, value: t[key], 'aria-label': label });
+      const num = el('input', { type: 'number', class: 'num', min, max, step: 'any', value: t[key], 'aria-label': label + ' value' });
+      range.addEventListener('input', () => { t[key] = +range.value; num.value = t[key]; app.requestDraw(); });
+      num.addEventListener('input', () => { if (num.value !== '' && Number.isFinite(+num.value)) { t[key] = Math.min(max, Math.max(min, +num.value)); range.value = t[key]; app.requestDraw(); } });
+      box.append(el('label', { class: 'field' }, label, range, num));
+    };
+    const check = (label, key) => box.append(el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: t[key], onchange: (e) => { t[key] = e.target.checked; app.requestDraw(); } }), label));
+    check('Show trace', 'show');
+    ctl('Opacity', 'opacity', 0, 1, 0.01);
+    ctl('Width °', 'span', 5, 170, 0.5);
+    ctl('Rotate', 'rot', -180, 180, 0.5);
+    ctl('Right °', 'offX', -90, 90, 0.5);
+    ctl('Down °', 'offY', -90, 90, 0.5);
+    const seg = el('div', { class: 'seg', role: 'group', 'aria-label': 'Trace projection' });
+    for (const [k, label, title] of [['flat', 'Wall photo', 'A photo of the beam on a flat wall, taken square on. Angles spread toward the edges, and this undoes it.'], ['even', 'Even angles', 'The image is already spaced evenly in angle, like this map.']]) {
+      seg.append(el('button', { type: 'button', title, class: t.projection === k ? 'on' : '', 'aria-pressed': t.projection === k ? 'true' : 'false', onclick: () => { t.projection = k; renderTraceControls(); } }, label));
+    }
+    box.append(el('div', { class: 'field' }, 'Projection', seg));
+    check('Flip', 'flip');
+    box.append(el('button', { type: 'button', onclick: () => { app.view.trace = null; renderTraceControls(); } }, 'Remove'),
+      el('div', { class: 'note' }, `${t.name}: a guide to trace against, drawn over the map only. Width is the angle the image spans from the light, edge to edge. It never becomes part of the profile.`));
+    app.requestDraw();
+  }
+
   async function save() {
-    const text = P.writeIES(app.doc, app.comp);
-    const name = `${(app.doc.name || 'profile').replace(/[\\/:*?"<>|]+/g, '_')}.ies`;
+    const session = app.doc.session;
+    const text = P.writeIES({ ...app.doc, session: undefined }, app.comp);
+    const name = `${fileStem()}.ies`;
     try {
       if (window.showSaveFilePicker) {
-        if (!fileHandle) fileHandle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'IES profile', accept: { 'text/plain': ['.ies'] } }] });
+        let fileHandle = fileHandles.get(session);
+        if (!fileHandle) { fileHandle = await window.showSaveFilePicker({ suggestedName: name, types: IES_TYPES }); fileHandles.set(session, fileHandle); }
         const w = await fileHandle.createWritable();
         await w.write(text);
         await w.close();
@@ -943,18 +1154,14 @@
       }
     } catch (e) {
       if (e.name === 'AbortError') return;
-      fileHandle = null;
+      fileHandles.delete(session);
     }
-    const a = el('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/plain' })), download: name });
-    document.body.append(a);
-    a.click();
-    a.remove();
-    // Firefox reads the blob after click returns, so it can't be revoked straight away.
-    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    download(new Blob([text], { type: 'text/plain' }), name);
     status(`Saved ${name} to your downloads folder.`);
   }
 
   // Wire up.
+  restoreView();
   const map = P.Map($('map'), app);
   const curve = P.Curve($('curve'), app);
   let preview = null;
@@ -965,8 +1172,14 @@
     status(`Preview shader failed to start. ${e.message}`, true);
   }
 
-  $('btn-open').onclick = () => $('file-input').click();
-  $('file-input').onchange = (e) => { if (e.target.files[0]) openFile(e.target.files[0]); e.target.value = ''; };
+  $('btn-open').onclick = pickOpen;
+  $('file-input').onchange = (e) => { if (e.target.files[0]) openFile(e.target.files[0], null, fileMode); e.target.value = ''; };
+  $('btn-share').onclick = shareLink;
+  $('btn-map-png').onclick = () => savePNG($('map'), 'map');
+  $('btn-preview-png').onclick = () => { if (preview) preview.draw(); savePNG($('preview'), 'preview'); };
+  $('btn-ref-file').onclick = () => pickFile('ref');
+  $('btn-trace').onclick = () => $('trace-input').click();
+  $('trace-input').onchange = (e) => { if (e.target.files[0]) loadTrace(e.target.files[0]); e.target.value = ''; };
   $('btn-save').onclick = save;
   $('btn-undo').onclick = doUndo;
   $('btn-redo').onclick = doRedo;
@@ -1017,8 +1230,18 @@
     $('bearing-reset').disabled = locked;
     app.requestDraw();
   };
+  // The cut at 90 degrees to the slice is off until asked for, so the map starts with one line.
+  const syncPerp = () => {
+    const on = app.view.showPerp;
+    $('btn-perp').classList.toggle('toggle-on', on);
+    $('btn-perp').setAttribute('aria-pressed', on ? 'true' : 'false');
+    $('legend-perp').hidden = !on;
+  };
+  $('btn-perp').onclick = () => { app.view.showPerp = !app.view.showPerp; syncPerp(); app.requestDraw(); };
+  syncPerp();
   $('add-layer').onchange = (e) => {
     if (!e.target.value) return;
+    if (e.target.value === 'ies') { e.target.value = ''; pickFile('layer'); return; }
     const l = FACTORY[e.target.value]();
     app.doc.layers.push(l);
     app.view.active = l.id;
@@ -1040,7 +1263,7 @@
     const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) && e.target.type !== 'range' && e.target.type !== 'checkbox';
     const k = e.key.toLowerCase();
     if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); save(); return; }
-    if ((e.ctrlKey || e.metaKey) && k === 'o') { e.preventDefault(); $('file-input').click(); return; }
+    if ((e.ctrlKey || e.metaKey) && k === 'o') { e.preventDefault(); pickOpen(); return; }
     if (typing) return;
     if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); }
     if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); doRedo(); }
@@ -1048,12 +1271,31 @@
     if (k === 'delete' && app.activeLayer()) deleteLayer(app.activeLayer());
   });
   window.addEventListener('dragover', (e) => e.preventDefault());
-  window.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) openFile(e.dataTransfer.files[0]); });
+  window.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    if (file.type.startsWith('image/')) { loadTrace(file); return; }
+    // Has to be asked for before the event ends. Only some browsers offer it.
+    const item = e.dataTransfer.items && e.dataTransfer.items[0];
+    const asked = item && item.getAsFileSystemHandle ? item.getAsFileSystemHandle().catch(() => null) : null;
+    openFile(file, asked ? await asked : null);
+  });
+  window.addEventListener('pagehide', saveSession);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveSession(); });
   wireLayerDragging();
   new ResizeObserver(() => app.requestDraw()).observe(document.querySelector('.workspace'));
 
   $('bearing').value = app.view.bearing;
   window.penumbra = app;
-  loadDoc(app.doc);
-  status('Started from the flashlight example.');
+  renderTraceControls();
+  const last = savedDoc();
+  if (last) {
+    loadDoc(last, true);
+    status('Picked up where you left off. Start from gives you a fresh profile.');
+  } else {
+    loadDoc(app.doc, true);
+    status('Started from the flashlight example.');
+  }
+  openSharedLink();
 })();

@@ -231,3 +231,33 @@ test('the earlier orientation test file imports', () => {
   assert.strictEqual(parsed.h.length, 73);
   assert.ok(P.sampleIES(parsed, 90, 30) > 900);
 });
+
+test('a file with more values than a spread can hold still opens', () => {
+  const nV = 361, nH = 721;
+  const angles = (n, span) => Array.from({ length: n }, (_, i) => +((i * span) / (n - 1)).toFixed(4)).join(' ');
+  const text = ['IESNA:LM-63-2002', 'TILT=NONE', `1 1000 1 ${nV} ${nH} 1 2 0 0 0`, '1 1 10', angles(nV, 180), angles(nH, 360), new Array(nV * nH).fill(5).join(' ')].join('\n');
+  const parsed = P.parseIES(text);
+  assert.strictEqual(parsed.cd.length, nV * nH);
+  assert.strictEqual(parsed.peak, 5);
+  const baked = P.bakeIES(parsed);
+  assert.strictEqual(baked.peak, 5);
+  assert.ok(Math.abs(baked.N[1234] - 1) < 1e-6);
+});
+
+test('a recipe without usable layers is ignored, not loaded', () => {
+  const comp = P.composite(doc([lobe(1, 0, 0)]));
+  const good = P.writeIES(doc([lobe(1, 0, 0)]), comp);
+  assert.ok(P.parseIES(good).doc);
+  const empty = Buffer.from(JSON.stringify({ layers: [], output: {} })).toString('base64');
+  const bad = good.split('\r\n').filter((s) => !s.startsWith('[_PENUMBRA_RECIPE]'));
+  bad.splice(1, 0, '[_PENUMBRA_RECIPE]' + empty);
+  assert.strictEqual(P.parseIES(bad.join('\r\n')).doc, null);
+});
+
+test('colour temperature is neutral at 6500 K and never changes luminance', () => {
+  const luma = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  P.kelvinRGB(6500).forEach((x) => assert.ok(Math.abs(x - 1) < 1e-9));
+  for (const k of [1500, 2700, 4000, 9000, 12000]) assert.ok(Math.abs(luma(P.kelvinRGB(k)) - 1) < 1e-9);
+  const warm = P.kelvinRGB(2700), cool = P.kelvinRGB(10000);
+  assert.ok(warm[0] > warm[2] && cool[2] > cool[0]);
+});

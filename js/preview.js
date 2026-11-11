@@ -18,6 +18,9 @@
   uniform bool spot, greyRoom, shadows;
   uniform int metal;
   uniform float roughness, haze, sourceRadius;
+  uniform vec3 tint;
+  uniform int count;
+  uniform float spacing;
   const float PI = 3.14159265359;
 
   // GGX distribution, Smith joint approximation and Schlick Fresnel.
@@ -44,8 +47,8 @@
     return textureLod(ies, vec2(v, h), 0.0).r;
   }
 
-  float lightAt(vec3 q, vec3 n) {
-    vec3 d = q - lightPos;
+  float lightAt(vec3 q, vec3 n, vec3 src) {
+    vec3 d = q - src;
     float d2 = max(dot(d, d), 1e-4);
     vec3 w = d / sqrt(d2);
     float cone = 1.0;
@@ -72,7 +75,7 @@
       float cone = 1.0;
       if (spot) { cone = clamp((dot(w, lightF) - cosOuter) * invCone, 0.0, 1.0); cone *= cone; }
       float e = haze * peak * profile(w) * cone / d2 / PI;
-      color = vec4(tonemap(vec3(e)), 1.0);
+      color = vec4(tonemap(tint * e), 1.0);
       return;
     }
     vec3 rd = normalize(camF + (uv.x * aspect.x * camR + uv.y * aspect.y * camU) * tanFov);
@@ -99,27 +102,32 @@
       float checker = mod(g.x + g.y + g.z, 2.0);
       albedo *= checker > 0.5 ? 1.0 : 0.72;
     }
-    float e = lightAt(q, n);
-    if (shadows && !ball) {
-      // The ball is the only caster, so the light is blocked only if this ray hits it on the way.
-      vec3 toLight = lightPos - q;
+    const float F0 = 0.91;
+    bool shiny = metal == 2 || (metal == 1 && ball);
+    float direct = 0.0;
+    // A row of identical lights along the light's right axis, centred on the light.
+    for (int i = 0; i < 12; i++) {
+      if (i >= count) break;
+      vec3 src = lightPos + lightB * ((float(i) - float(count - 1) * 0.5) * spacing);
+      float e = lightAt(q, n, src);
+      vec3 toLight = src - q;
       float lightDist = length(toLight);
-      vec3 ol = q - sc;
-      float along = -dot(ol, toLight / lightDist);
-      if (along > 0.001 && along < lightDist) {
-        // Compares the ray's miss distance with the ball's radius, softened by how large the
-        // source looks from the ball. An approximation, not a true area light.
-        float miss = sqrt(max(dot(ol, ol) - along * along, 0.0));
-        float blur = max(sourceRadius * along / lightDist, 0.001);
-        e *= smoothstep(0.5 - blur, 0.5 + blur, miss);
+      if (shadows && !ball) {
+        // The ball is the only caster, so the light is blocked only if this ray hits it on the way.
+        vec3 ol = q - sc;
+        float along = -dot(ol, toLight / lightDist);
+        if (along > 0.001 && along < lightDist) {
+          // Compares the ray's miss distance with the ball's radius, softened by how large the
+          // source looks from the ball. An approximation, not a true area light.
+          float miss = sqrt(max(dot(ol, ol) - along * along, 0.0));
+          float blur = max(sourceRadius * along / lightDist, 0.001);
+          e *= smoothstep(0.5 - blur, 0.5 + blur, miss);
+        }
       }
+      direct += shiny ? e * specular(n, -rd, toLight / lightDist, F0, lightDist) : albedo * e / PI;
     }
-    float lit = albedo * e / PI + albedo * ambient;
-    if (metal == 2 || (metal == 1 && ball)) {
-      const float F0 = 0.91;
-      lit = e * specular(n, -rd, normalize(lightPos - q), F0, length(lightPos - q)) + F0 * 0.18 * ambient;
-    }
-    color = vec4(tonemap(vec3(lit)), 1.0);
+    vec3 lit = tint * direct + vec3(shiny ? F0 * 0.18 * ambient : albedo * ambient);
+    color = vec4(tonemap(lit), 1.0);
   }`;
 
   const norm = (a) => { const l = Math.hypot(...a); return a.map((x) => x / l); };
@@ -418,6 +426,11 @@
       set1('roughness', Math.max(v.roughness, 0.04));
       set1('haze', v.haze);
       set1('sourceRadius', v.sourceRadius);
+      set3('tint', P.kelvinRGB(v.kelvin));
+      // First person is one handheld light, and Side is a single slice, so neither takes a row.
+      const rows = v.mode === 'wall' || v.mode === 'floor' || v.mode === 'free';
+      gl.uniform1i(u('count'), rows ? Math.max(1, Math.min(12, Math.round(v.count))) : 1);
+      set1('spacing', v.spacing);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       drawOverlay(v);
     }

@@ -223,3 +223,6 @@ button.toggle-on { background: #48484b; font-weight: 600; }
 .layer.dragging { opacity: 0.45; }
 .reordering, .reordering .layer { cursor: grabbing; }
 .layer-drop-marker { position: absolute; left: 6px; right: 6px; height: 2px; margin-top: -1px; background: var(--warm); pointer-events: none; }
+
+[hidden] { display: none !important; }
+.preview-controls .check { min-height: 18px; }

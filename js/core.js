@@ -26,6 +26,14 @@
   };
   P.dir = dir;
 
+  // A loop, because spreading a large file's values into Math.max overflows the stack.
+  const maxOf = (values) => {
+    let m = -Infinity;
+    for (let i = 0; i < values.length; i++) if (values[i] > m) m = values[i];
+    return m;
+  };
+  P.maxOf = maxOf;
+
   const gF = new Float64Array(SIZE * SIZE);
   const gR = new Float64Array(SIZE * SIZE);
   const gU = new Float64Array(SIZE * SIZE);
@@ -169,11 +177,24 @@
     return T;
   }
 
-  function noise3(x, y, z, seed) {
+  // Every lattice value a noise field of this frequency can ask for, hashed once. Each grid cell
+  // reads eight of them and neighbours share most, so hashing per read did the same work many times.
+  function noiseLattice(k, seed) {
+    const span = (offset) => [Math.floor(offset - k) - 1, Math.floor(offset + k) + 2];
+    const [x0, x1] = span(11), [y0, y1] = span(23), [z0, z1] = span(37);
+    const lo = x0 + y0 * 57 + z0 * 131, hi = x1 + y1 * 57 + z1 * 131;
+    const table = new Float64Array(hi - lo + 1);
+    for (let n = lo; n <= hi; n++) table[n - lo] = hash(n, seed);
+    return (a, b, c) => {
+      const n = a + b * 57 + c * 131;
+      return n >= lo && n <= hi ? table[n - lo] : hash(n, seed);
+    };
+  }
+
+  function noise3(x, y, z, g) {
     const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
     const fx = x - xi, fy = y - yi, fz = z - zi;
     const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy), w = fz * fz * (3 - 2 * fz);
-    const g = (a, b, c) => hash(a * 1 + b * 57 + c * 131, seed);
     const l = (a, b, t) => a + (b - a) * t;
     return l(
       l(l(g(xi, yi, zi), g(xi + 1, yi, zi), u), l(g(xi, yi + 1, zi), g(xi + 1, yi + 1, zi), u), v),
@@ -248,7 +269,7 @@
         return (t) => T[Math.min(1800, Math.round(t * 10))];
       }
       case 'imported': {
-        const peak = Math.max(1e-6, ...l.data.cd);
+        const peak = Math.max(1e-6, maxOf(l.data.cd));
         return (t, h) => P.sampleIES(l.data, h, t) / peak;
       }
       case 'beam':
@@ -285,15 +306,19 @@
     const isNoise = l.type === 'noise';
     const fn = isNoise ? null : prepare(l);
     const k = isNoise ? 57.3 / Math.max(l.scale, 0.2) : 0;
+    const lattice = isNoise ? noiseLattice(k, l.seed || 1) : null;
+    // These shapes depend only on the angle from their own axis, so the bearing is never worked out.
+    const round = sq === 1 && (l.type === 'beam' || l.type === 'ring' || l.type === 'curve');
     const n = SIZE * SIZE;
     for (let i = 0; i < n; i++) {
       const f = gF[i], r = gR[i], u = gU[i];
       if (isNoise) {
-        const v = noise3(f * k + 11, r * k + 23, u * k + 37, l.seed || 1);
+        const v = noise3(f * k + 11, r * k + 23, u * k + 37, lattice);
         out[i] = 1 - l.contrast * (1 - v);
         continue;
       }
       const lf = b.A[0] * f + b.A[1] * r + b.A[2] * u;
+      if (round) { out[i] = fn(Math.acos(lf > 1 ? 1 : lf < -1 ? -1 : lf) * DEG, 0); continue; }
       const lr = b.R[0] * f + b.R[1] * r + b.R[2] * u;
       const lu = b.U[0] * f + b.U[1] * r + b.U[2] * u;
       let t = Math.acos(lf > 1 ? 1 : lf < -1 ? -1 : lf) * DEG;
@@ -321,6 +346,37 @@
     if (!c) { c = { key: null, data: new Float32Array(SIZE * SIZE) }; cache.set(l.id, c); }
     if (c.key !== key) { computeField(l, c.data); c.key = key; }
     return c.data;
+  };
+  P.forgetLayer = (id) => cache.delete(id);
+
+  // A normalized grid and peak for a parsed file, for use as a comparison reference.
+  P.bakeIES = function (parsed) {
+    const N = new Float32Array(SIZE * SIZE);
+    const peak = Math.max(1e-6, maxOf(parsed.cd));
+    for (let y = 0, i = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++, i++) N[i] = Math.max(0, P.sampleIES(parsed, (y * 360) / SIZE, (x * 180) / SIZE)) / peak;
+    }
+    return { N, peak };
+  };
+
+  // Whether a decoded recipe has the parts the editor needs before it replaces the open profile.
+  P.validDoc = (d) => !!d && Array.isArray(d.layers) && d.layers.length > 0 && d.layers.every((l) => l && typeof l.type === 'string' && l.id !== undefined)
+    && !!d.output && typeof d.output === 'object';
+
+  // Light colour for a temperature in kelvin, as linear RGB with equal luminance, so a tint
+  // changes hue without changing how bright the preview reads. 6500 K is neutral.
+  P.kelvinRGB = function (kelvin) {
+    const raw = (k) => {
+      const t = clamp(k, 1000, 40000) / 100;
+      const r = t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -0.1332047592);
+      const g = t <= 66 ? 99.4708025861 * Math.log(t) - 161.1195681661 : 288.1221695283 * Math.pow(t - 60, -0.0755148492);
+      const b = t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+      return [r, g, b].map((c) => Math.pow(clamp(c, 0, 255) / 255, 2.2));
+    };
+    const white = raw(6500);
+    const c = raw(kelvin).map((x, i) => x / white[i]);
+    const y = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    return c.map((x) => x / y);
   };
 
   function applySymmetry(G, mode) {
@@ -575,8 +631,9 @@
     let doc = null;
     if (recipe) {
       try { doc = JSON.parse(decode(recipe)); } catch (e) { doc = null; }
+      if (!P.validDoc(doc)) doc = null;
     }
-    return { v, h, cd, type, lumens, watts, keywords, doc, peak: Math.max(...cd) };
+    return { v, h, cd, type, lumens, watts, keywords, doc, peak: maxOf(cd) };
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = P;
