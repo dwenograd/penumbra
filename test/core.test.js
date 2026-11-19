@@ -152,6 +152,74 @@ test('view-matching curves carry a look between the map views', () => {
   }
 });
 
+test('a rectangle has straight edges at its half width and half height', () => {
+  const rect = { id: 1, type: 'rect', enabled: true, blend: 'normal', gain: 0, mix: 1, width: 30, height: 8, soft: 0.5, round: 0 };
+  const N = P.composite(doc([rect])).N;
+  assert.ok(P.sample(N, 25, 0) > 0.99, 'inside along its width');
+  assert.ok(P.sample(N, 35, 0) < 0.01, 'outside along its width');
+  assert.ok(P.sample(N, 5, 90) > 0.99, 'inside along its height');
+  assert.ok(P.sample(N, 12, 90) < 0.01, 'outside along its height');
+  // A straight edge on a wall: points on the line x = tan(30) stay on the boundary however high they are.
+  const atEdge = (y) => {
+    const x = Math.tan((30 * Math.PI) / 180);
+    const t = (Math.atan(Math.hypot(x, y)) * 180) / Math.PI, h = (Math.atan2(y, x) * 180) / Math.PI;
+    return P.sample(N, t, (h + 360) % 360);
+  };
+  for (const y of [0, 0.05, 0.1]) assert.ok(Math.abs(atEdge(y) - 0.5) < 0.2, `edge stays straight at ${y}`);
+});
+
+test('a rectangle fades from its edges and can reverse the fade', () => {
+  const rect = { id: 1, type: 'rect', enabled: true, blend: 'normal', gain: 0, mix: 1, width: 30, height: 30, soft: 0.2, round: 0, fade: 20, fadeCurve: 1 };
+  const plain = P.composite(doc([rect]));
+  const at = (N, v) => P.sample(N, v, 0) * 1;
+  assert.ok(at(plain.N, 0) > 0.99, 'full in the middle');
+  assert.ok(Math.abs(at(plain.N, 20) - 0.5) < 0.08, 'halfway up the ramp 10 degrees in');
+  assert.ok(at(plain.N, 29) < 0.1, 'dark near the edge');
+  // No crease: brightness along a diagonal changes smoothly instead of kinking at the corner line.
+  const diagonal = [];
+  for (let k = 0; k <= 20; k++) diagonal.push(P.sample(plain.N, 4 + k, 45));
+  const bends = diagonal.slice(2).map((v, i) => Math.abs(v - 2 * diagonal[i + 1] + diagonal[i]));
+  assert.ok(Math.max(...bends) < 0.08, `diagonal stays smooth (${Math.max(...bends).toFixed(3)})`);
+  // A fade longer than the half height still has no ridge down the middle.
+  const long = P.composite(doc([{ ...rect, width: 46.9, height: 16.1, soft: 7.3, round: 0.27, fade: 43.3, fadeCurve: 1.14 }])).N;
+  for (const x of [20, 40, 60]) {
+    const row = (y) => long[x + y * 256];
+    // A ridge climbs just as steeply into the middle as beside it. A smooth top flattens out instead.
+    const step = row(0) - row(1), next = row(1) - row(2);
+    assert.ok(step < 0.6 * next, `no ridge at V ${(x * 180) / 256} (${step.toFixed(4)} vs ${next.toFixed(4)})`);
+  }
+  const reversed = P.composite(doc([{ ...rect, fadeReverse: true }]));
+  assert.ok(at(reversed.N, 0) < 0.01 && at(reversed.N, 29) > 0.9, 'reverse is bright at the edge');
+});
+
+test('skew slides a rectangle into a parallelogram and its helpers agree', () => {
+  const rect = { id: 1, type: 'rect', enabled: true, blend: 'normal', gain: 0, mix: 1, width: 10, height: 10, soft: 0.2, round: 0, skewX: 30 };
+  const N = P.composite(doc([rect])).N;
+  const sample = (x, y) => {
+    const t = (Math.atan(Math.hypot(x, y)) * 180) / Math.PI, h = (Math.atan2(y, x) * 180) / Math.PI;
+    return P.sample(N, t, (h + 360) % 360);
+  };
+  const T = (d) => Math.tan((d * Math.PI) / 180);
+  // Skew X slides the top edge sideways, so its far corner sits outside where an unskewed one would be.
+  const shift = T(30) * T(8);
+  assert.ok(sample(T(9) + shift, T(8)) > 0.9, 'inside the slid top edge');
+  assert.ok(sample(-T(9) + shift - 0.05, T(8)) < 0.1, 'outside on the opposite side');
+  const [t, h] = P.rectToLayer(rect, 0.2, 0.1);
+  const [x, y] = P.layerToRect(rect, t, h);
+  assert.ok(Math.abs(x - 0.2) < 1e-9 && Math.abs(y - 0.1) < 1e-9, 'round trip');
+});
+
+test('blinds open at the middle and close half a spacing away', () => {
+  const base = { id: 1, type: 'curve', enabled: true, blend: 'normal', gain: 0, mix: 1, points: [{ a: 0, v: 1 }, { a: 180, v: 1 }] };
+  const blinds = { id: 2, type: 'blinds', enabled: true, blend: 'multiply', gain: 0, mix: 1, period: 10, open: 0.5, soft: 0.2, phase: 0 };
+  const N = P.composite(doc([base, blinds])).N;
+  const at = (k) => P.sample(N, (Math.atan(k * Math.tan((10 * Math.PI) / 180)) * 180) / Math.PI, 90);
+  assert.ok(at(0) > 0.99, 'open in the middle');
+  assert.ok(at(0.5) < 0.01, 'slat half a spacing up');
+  assert.ok(at(1) > 0.99, 'open again a full spacing up');
+  assert.ok(P.sample(N, 30, 0) > 0.99, 'slats run across, so the horizontal line stays open');
+});
+
 test('source count multiplies per-source lumens', () => {
   const d = doc([lobe(1, 0, 0)]);
   d.output = { ...d.output, mode: 'flux', flux: 181000, count: 8 };

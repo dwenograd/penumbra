@@ -29,6 +29,8 @@
     ring: () => mk('ring', 'Ring', { radius: 22, width: 4, soft: 2 }),
     lobe: () => mk('beam', 'Lobe', { radius: 10, soft: 8, taper: 0.5, aimV: 28, aimH: 225, gain: -1 }),
     cutoff: () => mk('cutoff', 'Cutoff', { blend: 'multiply', bearing: 270, edge: 30, soft: 4 }),
+    rect: () => mk('rect', 'Rectangle', { width: 30, height: 8, soft: 2, round: 0, skewX: 0, skewY: 0, fade: 0, fadeCurve: 1, fadeReverse: false }),
+    blinds: () => mk('blinds', 'Blinds', { blend: 'multiply', period: 6, open: 0.5, soft: 0.6, phase: 0 }),
     repeat: () => mk('repeat', 'Repeat', { blend: 'multiply', count: 8, sharp: 0.1, inner: 5, outer: 60, fade: 4, phase: 0, mix: 0.5 }),
     curve: () => mk('curve', 'Free curve', { points: [{ a: 0, v: 1, s: 0 }, { a: 15, v: 0.8, s: 0 }, { a: 30, v: 0, s: 0.4 }, { a: 180, v: 0, s: 0 }] }),
     noise: () => mk('noise', 'Imperfection', { blend: 'multiply', scale: 6, contrast: 0.2, seed: 3 }),
@@ -283,7 +285,7 @@
   }
 
   const BLEND = { normal: 'Normal', add: 'Add', screen: 'Screen', max: 'Max', multiply: 'Multiply', subtract: 'Subtract' };
-  const TYPE_LABEL = { sliders: 'Sliders', imported: 'Imported', beam: 'Beam', ring: 'Ring', cutoff: 'Cutoff', repeat: 'Repeat', curve: 'Curve', noise: 'Imperfection', tonecurve: 'Curves', levels: 'Levels', contrast: 'Contrast' };
+  const TYPE_LABEL = { sliders: 'Sliders', imported: 'Imported', beam: 'Beam', ring: 'Ring', cutoff: 'Cutoff', rect: 'Rectangle', blinds: 'Blinds', repeat: 'Repeat', curve: 'Curve', noise: 'Imperfection', tonecurve: 'Curves', levels: 'Levels', contrast: 'Contrast' };
 
   function renderLayers() {
     const list = $('layer-list');
@@ -539,6 +541,9 @@
     beam: [['Edge angle', 'radius', 0.5, 180, 0.1], ['Softness', 'soft', 0, 60, 0.1], ['Taper', 'taper', 0, 1, 0.01]],
     ring: [['Radius', 'radius', 0, 180, 0.1], ['Width', 'width', 0, 60, 0.1], ['Softness', 'soft', 0, 30, 0.1]],
     cutoff: [['Bearing', 'bearing', 0, 360, 0.5], ['Edge', 'edge', -90, 180, 0.1], ['Softness', 'soft', 0, 60, 0.1]],
+    rect: [['Half width', 'width', 0.5, 85, 0.1], ['Half height', 'height', 0.5, 85, 0.1], ['Softness', 'soft', 0, 30, 0.1], ['Corner round', 'round', 0, 1, 0.01],
+      ['Skew X', 'skewX', -60, 60, 0.5], ['Skew Y', 'skewY', -60, 60, 0.5], ['Fade (°)', 'fade', 0, 60, 0.1], ['Fade curve', 'fadeCurve', 0.2, 5, 0.01]],
+    blinds: [['Spacing', 'period', 0.5, 45, 0.1], ['Open', 'open', 0, 1, 0.01], ['Softness', 'soft', 0, 10, 0.05], ['Phase', 'phase', 0, 1, 0.01]],
     repeat: [['Count', 'count', 1, 48, 1], ['Sharpness', 'sharp', 0, 1, 0.01], ['Inner', 'inner', 0, 180, 0.5], ['Outer', 'outer', 0, 180, 0.5], ['Outer fade', 'fade', 0, 40, 0.5], ['Phase', 'phase', 0, 360, 0.5]],
     noise: [['Scale', 'scale', 0.5, 45, 0.1], ['Contrast', 'contrast', 0, 1, 0.01], ['Seed', 'seed', 1, 999, 1]],
     levels: [['In black', 'inBlack', 0, 1, 0.005], ['In white', 'inWhite', 0, 1, 0.005], ['Gamma', 'gamma', 0.1, 5, 0.01], ['Out black', 'outBlack', 0, 1, 0.005], ['Out white', 'outWhite', 0, 1, 0.005]],
@@ -682,6 +687,10 @@
     if (l.type === 'curve') renderCurve(box, l);
     if (l.type === 'imported') box.append(el('p', { class: 'hint' }, `${l.data.h.length} horizontal and ${l.data.v.length} vertical angles, from ${l.source || 'an IES file'}. Add layers above it to rework it non-destructively.`));
     for (const [label, key, a, b, c] of FIELDS[l.type] || []) row(box, label, l, key, a, b, c);
+    if (l.type === 'rect') {
+      checkRow(box, 'Fade the other way: bright edges, darker middle', !!l.fadeReverse, (v) => { l.fadeReverse = v; app.changed(); app.commit(); });
+      box.append(el('p', { class: 'hint' }, 'Fade eases the light in from the edges over that many degrees, rounding off into the corners. Fade curve shapes it: below 1 rises fast, above 1 holds back longer.'));
+    }
 
     box.append(el('h3', { class: 'subhead' }, 'Compositing'));
     selectRow(box, 'Blend', l.blend || 'normal', BLEND, (v) => { l.blend = v; app.changed(); app.commit(); });

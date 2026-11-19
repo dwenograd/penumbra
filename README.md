@@ -20,6 +20,7 @@ An IES profile can be asymmetric and hold noise like lens grime, so a beam can c
 - **Trace image:** lay a photo of a real beam on a wall, or a drawing, over the map as a guide. It is only a guide: no image data ever goes into the profile.
 - **Slice curve:** drag to draw a curve, or type each point's angle, value and sharpness.
 - **Composited layers:** Beam, Ring, Lobe, Cutoff, Repeat, Free curve and Imperfection, with blend modes, EV gain, mix, clipping, solo and placement.
+- **Rectangle and Blinds layers:** straight-edged shapes and slatted bars that land as straight lines on a wall, for slots, barn doors and blind shadows.
 - **Adjustment layers:** Curves, Levels and Contrast reshape everything below them.
 - **Slider base layer:** C0-180 and C90-270 sliders at 10° steps with %, candela and lux, for anyone coming from slider-based tools.
 - **Preview:** First person, Free, Wall, Floor and Side views, with spot cone, inverse-square falloff, a grey or checker room, GGX metal and optional shadows. Free view flies around the room, and you can place and aim the light. Wall, Floor and Free can repeat the light in a row to judge overlap, and a colour temperature tints the preview.

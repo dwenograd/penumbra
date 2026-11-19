@@ -120,6 +120,11 @@
       if (aimable && l.type !== 'cutoff') out.push({ id: 'aim', at: P.layerToGrid(l, 0, 0) });
       if (l.type === 'beam' || l.type === 'ring') out.push({ id: 'radius', at: P.layerToGrid(l, l.radius, 180) });
       if (l.type === 'repeat') out.push({ id: 'outer', at: P.layerToGrid(l, l.outer, l.phase) });
+      if (l.type === 'rect') {
+        const T = (deg) => Math.tan((deg * Math.PI) / 180);
+        out.push({ id: 'rectWidth', at: P.layerToGrid(l, ...P.rectToLayer(l, T(l.width), 0)) });
+        out.push({ id: 'rectHeight', at: P.layerToGrid(l, ...P.rectToLayer(l, 0, T(l.height))) });
+      }
       if (l.type === 'cutoff') out.push({ id: 'edge', at: P.layerToGrid(l, Math.max(l.edge, 0), l.bearing) });
       return out;
     }
@@ -139,6 +144,24 @@
       if (l.type === 'beam') circle(l.radius);
       if (l.type === 'ring') { circle(l.radius - l.width / 2); circle(l.radius + l.width / 2); }
       if (l.type === 'repeat') { circle(l.inner); circle(l.outer); }
+      if (l.type === 'rect') {
+        // Walks the edges on the flat plane in front of the light, so they bend on the map as they would in angle.
+        const T = (deg) => Math.tan((deg * Math.PI) / 180);
+        const W = T(l.width), H = T(l.height);
+        const edges = [[], [], [], []];
+        for (let i = 0; i <= 24; i++) {
+          const k = -1 + (2 * i) / 24;
+          edges[0].push([W, H * k]); edges[1].push([W * -k, H]); edges[2].push([-W, H * -k]); edges[3].push([W * k, -H]);
+        }
+        ctx.beginPath();
+        edges.flat().forEach(([x, y], i) => {
+          const [v, h] = P.layerToGrid(l, ...P.rectToLayer(l, x, y));
+          const [px, py] = toScreen(v, h);
+          if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+        });
+        ctx.closePath();
+        ctx.stroke();
+      }
       if (l.type === 'cutoff') {
         const a = (l.bearing * Math.PI) / 180, r = (l.edge / ext) * R;
         const px = cx - r * Math.cos(a), py = cy + r * Math.sin(a);
@@ -321,6 +344,11 @@
       if (drag === 'aim') { l.aimV = centred ? 0 : round(vc); l.aimH = centred ? 0 : round(h); }
       if (drag === 'radius') l.radius = round(P.gridToLayer(l, vc, h)[0]);
       if (drag === 'outer') l.outer = round(P.gridToLayer(l, vc, h)[0]);
+      if (drag === 'rectWidth' || drag === 'rectHeight') {
+        const [x, y] = P.layerToRect(l, ...P.gridToLayer(l, vc, h));
+        const along = Math.abs(drag === 'rectWidth' ? x : y);
+        l[drag === 'rectWidth' ? 'width' : 'height'] = Math.max(0.5, Math.min(85, round((Math.atan(along) * 180) / Math.PI)));
+      }
       if (drag === 'edge') {
         if (centred) l.edge = 0; else { l.bearing = round(h); l.edge = round(vc); }
       }

@@ -252,6 +252,27 @@
     return near + (far - near) * (hi - h0);
   };
 
+  // Skew for Rectangle, on the flat plane in front of the light. Skew X slides the top and bottom
+  // edges sideways, and Skew Y slides the left and right edges up and down.
+  function rectShear(l) {
+    const a = Math.tan(clamp(l.skewX || 0, -60, 60) * RAD), b = Math.tan(clamp(l.skewY || 0, -60, 60) * RAD);
+    const det = Math.max(1 - a * b, 0.05);
+    return {
+      toRect: (x, y) => [x - a * y, y - b * x],
+      fromRect: (x, y) => [(x + a * y) / det, (y + b * x) / det],
+    };
+  }
+
+  // Where a point given in the rectangle's own units lands, as an angle and bearing from the layer's axis.
+  P.rectToLayer = function (l, x, y) {
+    const [px, py] = rectShear(l).fromRect(x, y);
+    return [Math.atan(Math.hypot(px, py)) * DEG, Math.atan2(py, px) * DEG];
+  };
+  P.layerToRect = function (l, t, h) {
+    const r = Math.tan(Math.min(t, 89) * RAD);
+    return rectShear(l).toRect(r * Math.cos(h * RAD), r * Math.sin(h * RAD));
+  };
+
   function prepare(l) {
     switch (l.type) {
       case 'sliders': {
@@ -287,6 +308,45 @@
           const x = t * Math.cos((h - l.bearing) * RAD);
           return 1 - smooth(l.edge - l.soft / 2, l.edge + l.soft / 2, x);
         };
+      // Rectangle and Blinds are laid out on a flat plane in front of the light, so their edges
+      // land as straight lines on a wall, the way a barn-doored or slatted fixture's do.
+      case 'rect': {
+        const corner = (l.round || 0) * Math.min(l.width, l.height);
+        const soft = Math.max(l.soft, 0.001) / 2;
+        const shear = rectShear(l);
+        const fade = l.fade || 0, curve = Math.max(l.fadeCurve || 1, 0.05);
+        return (t, h) => {
+          if (t >= 89.9) return 0;
+          const r = Math.tan(t * RAD);
+          const [x, y] = shear.toRect(r * Math.cos(h * RAD), r * Math.sin(h * RAD));
+          const ax = Math.atan(Math.abs(x)) * DEG;
+          const ay = Math.atan(Math.abs(y)) * DEG;
+          // Signed distance to a rounded rectangle, in degrees, so softness reads the same on every edge.
+          const qx = ax - (l.width - corner), qy = ay - (l.height - corner);
+          const d = Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - corner;
+          const mask = 1 - smooth(-soft, soft, d);
+          if (fade <= 0) return mask;
+          // Fades each axis on its own and multiplies them. Measuring from the nearest edge instead
+          // leaves hard creases running into the corners.
+          // A fade longer than the half size would meet its opposite side in a sharp ridge down the
+          // middle, so each side's fade stops at that side's half size and levels off there.
+          const ramp1 = (inset, size) => { const k = clamp(inset / Math.min(fade, size), 0, 1); return k * k * (3 - 2 * k); };
+          let ramp = Math.pow(ramp1(l.width - ax, l.width) * ramp1(l.height - ay, l.height), curve);
+          if (l.fadeReverse) ramp = 1 - ramp;
+          return mask * ramp;
+        };
+      }
+      case 'blinds': {
+        const period = Math.tan(Math.max(l.period, 0.1) * RAD);
+        const open = clamp(l.open, 0, 1) / 2;
+        const soft = Math.max(l.soft, 0.001) / Math.max(l.period, 0.1) / 2;
+        return (t, h) => {
+          if (t >= 89.9) return 1;
+          const y = Math.tan(t * RAD) * Math.sin(h * RAD) / period + (l.phase || 0);
+          const dist = Math.abs(y - Math.round(y));
+          return 1 - smooth(open - soft, open + soft, dist);
+        };
+      }
       case 'repeat': {
         const pow = 1 + l.sharp * 24;
         return (t, h) => {
