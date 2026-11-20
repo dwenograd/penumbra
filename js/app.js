@@ -311,7 +311,7 @@
           e.preventDefault();
           if (e.target.readOnly) { e.target.readOnly = false; e.target.select(); } else { e.target.blur(); }
         } });
-      const meta = P.isAdjustment(l) ? `Adjustment · ${TYPE_LABEL[l.type]}` : `${TYPE_LABEL[l.type]} · ${BLEND[l.blend || 'normal']}${l.gain ? ` ${l.gain > 0 ? '+' : ''}${(+l.gain).toFixed(1)} EV` : ''}${l.clip ? ' · clipped' : ''}`;
+      const meta = P.isAdjustment(l) ? `Adjustment · ${TYPE_LABEL[l.type]}` : `${TYPE_LABEL[l.type]} · ${BLEND[l.blend || 'normal']}${l.gain ? ` ${l.gain > 0 ? '+' : ''}${(+l.gain).toFixed(1)} EV` : ''}${l.invert ? ' · inverted' : ''}${l.clip ? ' · clipped' : ''}`;
       const cv = el('canvas', { 'aria-hidden': 'true' });
       const li = el('li', { class: 'layer' + (l.id === app.view.active ? ' active' : '') + (l.enabled ? '' : ' muted'), 'data-id': l.id, onclick: () => selectLayer(l.id), ondblclick: (e) => {
         if (e.target.closest('button')) return;
@@ -696,6 +696,7 @@
     selectRow(box, 'Blend', l.blend || 'normal', BLEND, (v) => { l.blend = v; app.changed(); app.commit(); });
     row(box, 'Gain (EV)', l, 'gain', -8, 4, 0.1);
     row(box, 'Mix', l, 'mix', 0, 1, 0.01);
+    checkRow(box, 'Invert: dark where the layer is bright', !!l.invert, (v) => { l.invert = v; app.changed(); app.commit(); });
     if (app.doc.layers.indexOf(l) > 0) {
       checkRow(box, 'Clip to the layer below', l.clip, (v) => { l.clip = v; app.changed(); app.commit(); });
     }

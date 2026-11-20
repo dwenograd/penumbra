@@ -392,6 +392,8 @@
       if (h < 0) h += 360 * Math.ceil(-h / 360);
       out[i] = fn(t, h % 360);
     }
+    // Inverting here, before gain and blending, means thumbnails and clipping see the inverted layer too.
+    if (l.invert) for (let i = 0; i < n; i++) out[i] = out[i] < 1 ? 1 - out[i] : 0;
   }
 
   const cache = new Map();

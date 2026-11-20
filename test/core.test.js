@@ -329,3 +329,13 @@ test('colour temperature is neutral at 6500 K and never changes luminance', () =
   const warm = P.kelvinRGB(2700), cool = P.kelvinRGB(10000);
   assert.ok(warm[0] > warm[2] && cool[2] > cool[0]);
 });
+
+test('invert flips a layer before it blends, and clipping follows it', () => {
+  const ring = { id: 1, type: 'ring', enabled: true, blend: 'normal', gain: 0, mix: 1, radius: 30, width: 6, soft: 1 };
+  const plain = P.layerField(ring);
+  const inv = P.layerField({ ...ring, id: 2, invert: true });
+  for (const i of [0, 5000, 20000, 40000]) assert.ok(Math.abs(inv[i] - (1 - plain[i])) < 1e-6, 'one minus the layer');
+  const base = { id: 3, type: 'beam', enabled: true, blend: 'normal', gain: 0, mix: 1, radius: 60, soft: 5, taper: 0 };
+  const out = P.composite(doc([base, { ...ring, id: 4, blend: 'multiply', invert: true }])).N;
+  assert.ok(P.sample(out, 30, 0) < 0.1 * P.sample(out, 10, 0), 'the inverted ring darkens a ring in the beam');
+});
