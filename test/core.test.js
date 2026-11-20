@@ -339,3 +339,15 @@ test('invert flips a layer before it blends, and clipping follows it', () => {
   const out = P.composite(doc([base, { ...ring, id: 4, blend: 'multiply', invert: true }])).N;
   assert.ok(P.sample(out, 30, 0) < 0.1 * P.sample(out, 10, 0), 'the inverted ring darkens a ring in the beam');
 });
+
+test('multiply depth darkens by that many stops and fades its edge in stops', () => {
+  const base = { id: 10, type: 'beam', enabled: true, blend: 'normal', gain: 0, mix: 1, radius: 80, soft: 5, taper: 0 };
+  const ring = { id: 11, type: 'ring', enabled: true, blend: 'multiply', gain: 0, mix: 1, radius: 30, width: 10, soft: 8, invert: true };
+  const at = (layer, t) => P.sample(P.composite(doc([base, layer])).N, t, 0);
+  const open = at({ ...ring, depth: 2 }, 5);
+  assert.ok(Math.abs(Math.log2(at({ ...ring, depth: 2 }, 30) / open) + 2) < 0.05, 'two stops down in the middle of the ring');
+  // Halfway across the soft edge the mask is 0.5, which is half the depth in stops.
+  assert.ok(Math.abs(Math.log2(at({ ...ring, depth: 4 }, 25) / open) + 2) < 0.1, 'half the stops halfway across the edge');
+  assert.ok(at({ ...ring, depth: P.FULL_DEPTH }, 30) < 1e-4, 'full depth is the plain multiply to black');
+  assert.ok(at(ring, 30) < 1e-4, 'layers saved before Depth keep the plain multiply');
+});

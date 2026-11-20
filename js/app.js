@@ -693,9 +693,14 @@
     }
 
     box.append(el('h3', { class: 'subhead' }, 'Compositing'));
-    selectRow(box, 'Blend', l.blend || 'normal', BLEND, (v) => { l.blend = v; app.changed(); app.commit(); });
+    selectRow(box, 'Blend', l.blend || 'normal', BLEND, (v) => { l.blend = v; app.changed(); app.commit(); renderInspector(); });
     row(box, 'Gain (EV)', l, 'gain', -8, 4, 0.1);
     row(box, 'Mix', l, 'mix', 0, 1, 0.01);
+    if (l.blend === 'multiply') {
+      if (l.depth === undefined) l.depth = P.FULL_DEPTH;
+      row(box, 'Depth (EV)', l, 'depth', 0.5, P.FULL_DEPTH, 0.1);
+      box.append(el('p', { class: 'hint' }, `How many stops the darkest part of this layer takes away, with soft edges easing off in stops. ${P.FULL_DEPTH} is a plain multiply, all the way to black.`));
+    }
     checkRow(box, 'Invert: dark where the layer is bright', !!l.invert, (v) => { l.invert = v; app.changed(); app.commit(); });
     if (app.doc.layers.indexOf(l) > 0) {
       checkRow(box, 'Clip to the layer below', l.clip, (v) => { l.clip = v; app.changed(); app.commit(); });

@@ -398,7 +398,7 @@
 
   const cache = new Map();
   const shapeKey = (l) => {
-    const { name, blend, gain, mix, enabled, solo, clip, data, ...shape } = l;
+    const { name, blend, gain, mix, depth, enabled, solo, clip, data, ...shape } = l;
     return JSON.stringify(shape) + (data ? data.cd.length + ':' + data.cd[0] + ':' + data.h.length : '');
   };
 
@@ -517,6 +517,9 @@
     }
   }
 
+  // Multiply Depth at or above this is the plain multiply, all the way to black.
+  P.FULL_DEPTH = 16;
+
   P.composite = function (doc) {
     const G = new Float32Array(SIZE * SIZE);
     const anySolo = doc.layers.some((l) => l.solo);
@@ -529,6 +532,9 @@
       const gain = Math.pow(2, l.gain || 0);
       const mix = l.mix === undefined ? 1 : l.mix;
       const mode = l.blend || 'normal';
+      // Multiply's Depth: how many stops the dark end of the layer takes away. Below the full
+      // depth, the layer blends in stops, so soft edges fall off evenly instead of crashing to black.
+      const depth = mode === 'multiply' && l.depth !== undefined && l.depth < P.FULL_DEPTH ? Math.max(l.depth, 0) : 0;
       for (let i = 0; i < G.length; i++) {
         const u = G[i];
         let a = F[i] * gain;
@@ -538,7 +544,7 @@
           case 'add': v = u + a; break;
           case 'screen': v = u + a - u * a; break;
           case 'max': v = a > u ? a : u; break;
-          case 'multiply': v = u * a; break;
+          case 'multiply': v = u * (depth && a < 1 ? Math.pow(2, -depth * (1 - a)) : a); break;
           case 'subtract': v = u > a ? u - a : 0; break;
           default: v = a;
         }
